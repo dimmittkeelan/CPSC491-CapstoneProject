@@ -77,13 +77,19 @@
   font-size: 1rem;
   font-weight: 600;
   text-decoration: none;
-  transition: background 0.3s;
+  transition: background 0.3s, box-shadow 0.2s, border-color 0.2s;
 }
 
 .btn-secondary:hover {
   background-color: rgba(138, 43, 226, 0.1);
 }
 
+.btn-secondary:focus-visible {
+  background-color: rgba(138, 43, 226, 0.15);
+  border-color: #9d4ced;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(157, 76, 237, 0.7);
+}
 /* --- HOW IT WORKS SECTION --- */
 .how-it-works-section {
   padding: 80px 20px;
