@@ -51,6 +51,10 @@ export default function SignUp() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Enter your password"
+          required                // 1. Required field
+          minLength="8"           // 2. Must be at least 8 characters
+          pattern="(?=.*\d).*"    // 3. Must contain at least one number
+          title="Password must be at least 8 characters and contain a number" // 4. The error message
         />
         <button type="submit">Sign Up</button>
         <p className="login-redirect">

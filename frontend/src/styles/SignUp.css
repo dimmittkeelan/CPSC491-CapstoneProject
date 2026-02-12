@@ -54,6 +54,7 @@
   font-weight: bold;
   cursor: pointer;
   transition: background-color 0.3s;
+  margin-top: 1rem; /* Adds space above the sign-up button */
 }
 
 .signup-form button:hover {
@@ -74,4 +75,16 @@
 
 .login-redirect a:hover {
   text-decoration: underline;
+}
+
+.password-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkmark {
+  color: green;
+  font-size: 1.2rem;
+  font-weight: bold;
 }
