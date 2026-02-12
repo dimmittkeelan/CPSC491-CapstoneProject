@@ -7,9 +7,18 @@ export default function Login() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    // TODO: Replace this console.log with a POST request to the server
+    // Example using fetch:
+    // fetch("http://localhost:5000/login", {
+    //   method: "POST",
+    //   headers: { "Content-Type": "application/json" },
+    //   body: JSON.stringify({ username, password }),
+    // })
+    //   .then((response) => response.json())
+    //   .then((data) => console.log(data))
+    //   .catch((error) => console.error("Error:", error));
     console.log("Username:", username);
     console.log("Password:", password);
-    // Placeholder for database integration
   };
 
   return (

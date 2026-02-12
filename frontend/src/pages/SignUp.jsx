@@ -9,10 +9,19 @@ export default function SignUp() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    // TODO: Replace this console.log with a POST request to the server
+    // Example using fetch:
+    // fetch("http://localhost:5000/signup", {
+    //   method: "POST",
+    //   headers: { "Content-Type": "application/json" },
+    //   body: JSON.stringify({ username, password, email }),
+    // })
+    //   .then((response) => response.json())
+    //   .then((data) => console.log(data))
+    //   .catch((error) => console.error("Error:", error));
     console.log("Username:", username);
     console.log("Password:", password);
     console.log("Email:", email);
-    // Placeholder for backend integration
   };
 
   return (

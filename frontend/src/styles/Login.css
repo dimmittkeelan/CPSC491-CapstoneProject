@@ -1,3 +1,7 @@
+* {
+    box-sizing: border-box;
+  }
+
 .login-container {
   display: flex;
   justify-content: center;
@@ -30,14 +34,15 @@
 }
 
 .login-form input {
-  width: 100%;
-  padding: 0.75rem;
-  margin: 0.5rem auto; /* Adds spacing between input boxes and centers them */
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 1rem;
-  display: block;
-}
+    box-sizing: border-box; /* <--- ADD THIS LINE */
+    width: 100%;
+    padding: 0.75rem;
+    margin: 0.5rem auto;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+    display: block;
+  }
 
 .login-form button {
   width: 100%;
