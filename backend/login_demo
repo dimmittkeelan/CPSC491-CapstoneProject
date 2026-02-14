@@ -1,0 +1,47 @@
+\du
+alter role baremetal with password 'Flaire10';
+\q
+create role login_app login password 'CPSC491'
+nosuperuser nocreatedb nocreaterole noreplication;
+create database login_demo owner login_app;
+revoke all on database login_demo from public;
+grant connect on database login_demo to login_app;
+\c login_demo
+create table if not exists users ( id bigserial primary key, email text unique not null, password_hash text not null, created_at timestamptz not null default now () );
+list
+show tables
+show
+select all
+select * from postgres
+\du
+switch login_db
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+ls
+exit
+\q
+\l
+\l+
+exit()
+exit
+\q
+\l
+\s login_demo
