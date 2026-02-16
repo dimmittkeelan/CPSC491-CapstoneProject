@@ -1,0 +1,62 @@
+* {
+    box-sizing: border-box;
+  }
+
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: #000; /* Matches the black background used in other pages */
+}
+
+.login-form {
+  background: #151515; /* Matches the gray color of the navigation bar */
+  color: white; /* Ensures text is readable on the dark background */
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto; /* Centers the entire form horizontally */
+}
+
+.login-form h2 {
+  margin-bottom: 1.5rem;
+  font-size: 1.5rem;
+  text-align: center;
+}
+
+.login-form label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: bold;
+}
+
+.login-form input {
+    box-sizing: border-box; /* <--- ADD THIS LINE */
+    width: 100%;
+    padding: 0.75rem;
+    margin: 0.5rem auto;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+    display: block;
+  }
+
+.login-form button {
+  width: 100%;
+  padding: 0.75rem;
+  background-color: #8A2BE2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.login-form button:hover {
+  background-color: #9d4ced;
+}
