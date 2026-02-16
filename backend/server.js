@@ -77,7 +77,7 @@ app.post("/auth/login", async (req, res) => {
         if (!email || !password) return res.status(400).json({ ok: false, error: "email/password required"});
         
         const { rows } = await pool.query(
-            `SELECT id, email, password_hash, FROM users WHERE email = $1`,
+            `SELECT id, email, password_hash FROM users WHERE email = $1`,
             [email.toLowerCase()]
 
         );
@@ -99,12 +99,16 @@ app.post("/auth/login", async (req, res) => {
 });
 
 app.get("/auth/me", requireAuth, async (req, res) =>{ 
-
-    const { row } = await pool.query(
-        'SELECT id, email FROM users WHERE id = $1',    
-        [req.session.userId]
-    );
-    return res.json({ ok: true, user: rows[0] });
+    try {
+        const { row } = await pool.query(
+            'SELECT id, email FROM users WHERE id = $1',    
+            [req.session.userId]
+        );
+        return res.json({ ok: true, user: rows[0] });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: "Server error"});
+    }
 });
 
 app.post("/auth/logout", (req, res) => {
