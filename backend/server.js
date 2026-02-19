@@ -10,9 +10,6 @@ dotenv.config();
 // Debug to check env 
 if (!process.env.SESSION_SECRET) throw new Error("Session_secret missing!");
 
-
-
-
 const app = express();
 app.use(express.json());
 
@@ -52,7 +49,7 @@ app.get( "/", (req, res) => {
 });
 
 app.get("/favicon.ico", (req, res) => {
-    res.status("204").end();
+    res.status(204).end();
 });
 
 
