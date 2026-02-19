@@ -17,7 +17,7 @@ app.get( "/", (req, res) => {
     res.type("text").send("ok");
 });
 
-app.get("favicon.ico", (req, res) => {
+app.get("/favicon.ico", (req, res) => {
     res.status(204).end();
 });
 
