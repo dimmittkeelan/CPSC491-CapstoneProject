@@ -41,6 +41,15 @@ function requireAuth(req, res, next) {
     return next();
 }
 
+app.get( "/", (req, res) => {
+    res.type("text").send("ok");
+});
+
+app.get("/favicon.ico", (req, res) => {
+    res.status("204").end();
+});
+
+
 app.post("/auth/register", async (req, res) => {
 
     const { email, password } = req.body ?? {};
