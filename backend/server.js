@@ -7,6 +7,12 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// Debug to check env 
+if (!process.env.SESSION_SECRET) throw new Error("Session_secret missing!");
+
+
+
+
 const app = express();
 app.use(express.json());
 
