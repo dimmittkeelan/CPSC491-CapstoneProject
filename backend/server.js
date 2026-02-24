@@ -7,8 +7,19 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// Debug to check env 
+if (!process.env.SESSION_SECRET) throw new Error("Session_secret missing!");
+
 const app = express();
 app.use(express.json());
+
+app.get( "/", (req, res) => {
+    res.type("text").send("ok");
+});
+
+app.get("/favicon.ico", (req, res) => {
+    res.status(204).end();
+});
 
 const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
@@ -40,6 +51,9 @@ function requireAuth(req, res, next) {
     if(!req.session?.userId) return res.status(401).json({ ok: false, error: "Not Logged in"});
     return next();
 }
+
+
+
 
 app.post("/auth/register", async (req, res) => {
 
