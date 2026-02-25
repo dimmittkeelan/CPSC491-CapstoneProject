@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "dependencies": {
     "bcrypt": "^6.0.0",
     "connect-pg-simple": "^10.0.0",
