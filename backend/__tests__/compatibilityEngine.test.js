@@ -1,6 +1,7 @@
 import {
   checkCpuMotherboardCompatibility,
   checkRamMotherboardCompatibility,
+  checkPsuWattageCompatibility,
 } from "../compatibilityEngine.js";
 
 test("CPU and motherboard sockets match -> compatible", () => {
@@ -38,6 +39,28 @@ test("RAM type mismatch -> incompatible", () => {
   const motherboard = { ramType: "DDR5" };
 
   const result = checkRamMotherboardCompatibility(ram, motherboard);
+
+  expect(result.compatible).toBe(false);
+  expect(result.issues.length).toBeGreaterThan(0);
+});
+
+test("PSU wattage sufficient -> compatible", () => {
+  const psu = { wattage: 650 };
+  const cpu = { tdp: 105 };
+  const gpu = { tdp: 200 };
+
+  const result = checkPsuWattageCompatibility(psu, cpu, gpu);
+
+  expect(result.compatible).toBe(true);
+  expect(result.issues).toEqual([]);
+});
+
+test("PSU wattage insufficient -> incompatible", () => {
+  const psu = { wattage: 450 };
+  const cpu = { tdp: 105 };
+  const gpu = { tdp: 250 };
+
+  const result = checkPsuWattageCompatibility(psu, cpu, gpu);
 
   expect(result.compatible).toBe(false);
   expect(result.issues.length).toBeGreaterThan(0);

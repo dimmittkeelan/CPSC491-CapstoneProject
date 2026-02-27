@@ -8,6 +8,7 @@ import dotenv from "dotenv";
 import {
   checkCpuMotherboardCompatibility,
   checkRamMotherboardCompatibility,
+  checkPsuWattageCompatibility,
 } from "./compatibilityEngine.js";
 
 dotenv.config();
@@ -26,12 +27,18 @@ app.get("/favicon.ico", (req, res) => {
 });
 
 app.post("/api/compatibility", (req, res) => {
-  const { cpu, motherboard, ram } = req.body ?? {};
+  const { cpu, motherboard, ram, gpu, psu } = req.body ?? {};
 
   const cpuResult = checkCpuMotherboardCompatibility(cpu, motherboard);
   const ramResult = checkRamMotherboardCompatibility(ram, motherboard);
+  const psuResult = checkPsuWattageCompatibility(psu, cpu, gpu);
 
-  const issues = [...cpuResult.issues, ...ramResult.issues];
+  const issues = [
+    ...cpuResult.issues,
+    ...ramResult.issues,
+    ...psuResult.issues,
+  ];
+
   const compatible = issues.length === 0;
 
   return res.json({ compatible, issues });
