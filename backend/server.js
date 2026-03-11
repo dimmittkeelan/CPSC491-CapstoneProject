@@ -9,6 +9,7 @@ import {
   checkCpuMotherboardCompatibility,
   checkRamMotherboardCompatibility,
   checkPsuWattageCompatibility,
+  checkRamCapacityCompatibility,
 } from "./compatibilityEngine.js";
 
 dotenv.config();
@@ -30,13 +31,15 @@ app.post("/api/compatibility", (req, res) => {
   const { cpu, motherboard, ram, gpu, psu } = req.body ?? {};
 
   const cpuResult = checkCpuMotherboardCompatibility(cpu, motherboard);
-  const ramResult = checkRamMotherboardCompatibility(ram, motherboard);
+  const ramTypeResult = checkRamMotherboardCompatibility(ram, motherboard);
   const psuResult = checkPsuWattageCompatibility(psu, cpu, gpu);
+  const ramCapacityResult = checkRamCapacityCompatibility(ram, motherboard);
 
   const issues = [
     ...cpuResult.issues,
-    ...ramResult.issues,
+    ...ramTypeResult.issues,
     ...psuResult.issues,
+    ...ramCapacityResult.issues,
   ];
 
   const compatible = issues.length === 0;
@@ -120,7 +123,7 @@ app.post("/auth/login", async (req, res) => {
     const user = rows[0];
 
     // NOTE: leaving as-is per your repo; this section has existing issues in the repo.
-    const ok = await bcrypt.compare(password, user.passwordHash);
+    const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
       return res.status(401).json({ ok: false, error: "Invalid credentials" });
     }
@@ -135,8 +138,8 @@ app.post("/auth/login", async (req, res) => {
 
 app.get("/auth/me", requireAuth, async (req, res) => {
   try {
-    const { row } = await pool.query("SELECT id, email FROM users WHERE id = $1", [
-      req.session.userId,
+    const { rows } = await pool.query("SELECT id, email FROM users WHERE id = $1", [
+    req.session.userId,
     ]);
     return res.json({ ok: true, user: rows[0] });
   } catch (e) {

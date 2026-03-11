@@ -2,6 +2,7 @@ import {
   checkCpuMotherboardCompatibility,
   checkRamMotherboardCompatibility,
   checkPsuWattageCompatibility,
+  checkRamCapacityCompatibility,
 } from "../compatibilityEngine.js";
 
 test("CPU and motherboard sockets match -> compatible", () => {
@@ -61,6 +62,26 @@ test("PSU wattage insufficient -> incompatible", () => {
   const gpu = { tdp: 250 };
 
   const result = checkPsuWattageCompatibility(psu, cpu, gpu);
+
+  expect(result.compatible).toBe(false);
+  expect(result.issues.length).toBeGreaterThan(0);
+});
+
+test("RAM capacity within motherboard limit -> compatible", () => {
+  const ram = { capacity: 32 };
+  const motherboard = { maxRam: 64 };
+
+  const result = checkRamCapacityCompatibility(ram, motherboard);
+
+  expect(result.compatible).toBe(true);
+  expect(result.issues).toEqual([]);
+});
+
+test("RAM capacity exceeds motherboard limit -> incompatible", () => {
+  const ram = { capacity: 128 };
+  const motherboard = { maxRam: 64 };
+
+  const result = checkRamCapacityCompatibility(ram, motherboard);
 
   expect(result.compatible).toBe(false);
   expect(result.issues.length).toBeGreaterThan(0);

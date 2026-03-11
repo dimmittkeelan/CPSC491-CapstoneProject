@@ -78,3 +78,33 @@ export function checkPsuWattageCompatibility(psu, cpu, gpu, baseBuffer = 100) {
     issues: []
   };
 }
+
+export function checkRamCapacityCompatibility(ram, motherboard) {
+  if (!ram || !motherboard) {
+    return {
+      compatible: false,
+      issues: ["Missing RAM or motherboard data"]
+    };
+  }
+
+  if (typeof ram.capacity !== "number" || typeof motherboard.maxRam !== "number") {
+    return {
+      compatible: false,
+      issues: ["Missing or invalid RAM capacity data"]
+    };
+  }
+
+  if (ram.capacity > motherboard.maxRam) {
+    return {
+      compatible: false,
+      issues: [
+        `RAM capacity ${ram.capacity}GB exceeds motherboard maximum supported RAM ${motherboard.maxRam}GB`
+      ]
+    };
+  }
+
+  return {
+    compatible: true,
+    issues: []
+  };
+}
