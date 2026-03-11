@@ -47,6 +47,42 @@ app.post("/api/compatibility", (req, res) => {
   return res.json({ compatible, issues });
 });
 
+app.post("/api/build-analysis", (req, res) => {
+  const { cpu, motherboard, ram, gpu, psu } = req.body ?? {};
+
+  const cpuResult = checkCpuMotherboardCompatibility(cpu, motherboard);
+  const ramTypeResult = checkRamMotherboardCompatibility(ram, motherboard);
+  const psuResult = checkPsuWattageCompatibility(psu, cpu, gpu);
+  const ramCapacityResult = checkRamCapacityCompatibility(ram, motherboard);
+
+  const issues = [
+    ...cpuResult.issues,
+    ...ramTypeResult.issues,
+    ...psuResult.issues,
+    ...ramCapacityResult.issues,
+  ];
+
+  const compatible = issues.length === 0;
+
+  const estimatedPower =
+    (typeof cpu?.tdp === "number" ? cpu.tdp : 0) +
+    (typeof gpu?.tdp === "number" ? gpu.tdp : 0) +
+    100;
+
+  return res.json({
+    compatible,
+    estimatedPower,
+    issues,
+    parts: {
+      cpu,
+      motherboard,
+      ram,
+      gpu,
+      psu,
+    },
+  });
+});
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
@@ -122,7 +158,6 @@ app.post("/auth/login", async (req, res) => {
 
     const user = rows[0];
 
-    // NOTE: leaving as-is per your repo; this section has existing issues in the repo.
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
       return res.status(401).json({ ok: false, error: "Invalid credentials" });
@@ -139,7 +174,7 @@ app.post("/auth/login", async (req, res) => {
 app.get("/auth/me", requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT id, email FROM users WHERE id = $1", [
-    req.session.userId,
+      req.session.userId,
     ]);
     return res.json({ ok: true, user: rows[0] });
   } catch (e) {
