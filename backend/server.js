@@ -4,6 +4,7 @@ import pg from "pg";
 import bcrypt from "bcrypt";
 import connectPgSimple from "connect-pg-simple";
 import dotenv from "dotenv";
+import { priceTrackingRouter } from "./routes/priceTracking.js";
 
 import {
   checkCpuMotherboardCompatibility,
@@ -18,6 +19,7 @@ if (!process.env.SESSION_SECRET) throw new Error("Session_secret missing!");
 
 const app = express();
 app.use(express.json());
+app.use("/api", priceTrackingRouter);
 
 app.get("/", (req, res) => {
   res.type("text").send("ok");
