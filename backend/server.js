@@ -164,7 +164,7 @@ export function createApp({
   app.use("/api", priceTrackingRouter);
 
   app.get("/", (req, res) => {
-    res.type("text").send("ok");
+    res.type("text").send("ok jose");
   });
 
   app.get("/favicon.ico", (req, res) => {
