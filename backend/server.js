@@ -149,6 +149,7 @@ function requireAuth(req, res, next) {
   return next();
 }
 
+// Build app for tests
 export function createApp({
   pool,
   bcryptLib = bcrypt,
