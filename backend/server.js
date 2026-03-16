@@ -14,6 +14,7 @@ import {
   checkRamCapacityCompatibility,
 } from "./compatibilityEngine.js";
 
+// Check if server is being ran by test suite
 dotenv.config({ quiet: process.env.NODE_ENV === "test" });
 
 function buildCompatibilityResponse(body = {}) {
@@ -164,7 +165,7 @@ export function createApp({
   app.use("/api", priceTrackingRouter);
 
   app.get("/", (req, res) => {
-    res.type("text").send("ok jose");
+    res.type("text").send("ok");
   });
 
   app.get("/favicon.ico", (req, res) => {
