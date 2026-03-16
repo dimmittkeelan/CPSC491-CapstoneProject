@@ -27,6 +27,16 @@
   text-align: center;
 }
 
+.form-error {
+  color: #ff8f8f;
+  background: rgba(255, 99, 99, 0.12);
+  border: 1px solid rgba(255, 99, 99, 0.35);
+  border-radius: 4px;
+  padding: 0.65rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.92rem;
+}
+
 .signup-form label {
   display: block;
   margin-bottom: 0.5rem;
@@ -58,6 +68,11 @@
 
 .signup-form button:hover {
   background-color: #9d4ced;
+}
+
+.signup-form button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 
 .login-redirect {

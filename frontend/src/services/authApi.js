@@ -1,0 +1,38 @@
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function resolveUrl(path) {
+  if (!API_BASE_URL) return path;
+  return `${API_BASE_URL}${path}`;
+}
+
+async function postJson(path, payload) {
+  const response = await fetch(resolveUrl(path), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || "Request failed");
+  }
+
+  return data;
+}
+
+export function register(email, password) {
+  return postJson("/auth/register", { email, password });
+}
+
+export function login(email, password) {
+  return postJson("/auth/login", { email, password });
+}
