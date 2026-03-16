@@ -1,23 +1,26 @@
-import test from "node:test";
-import assert from "node:assert";
-
 import {
   checkPriceDrop,
   trackPart,
-  observeNewPrice
+  observeNewPrice,
+  trackedParts,
 } from "../services/priceObserver.js";
+
+beforeEach(() => {
+  trackedParts.clear();
+});
 
 test("detect price drop", () => {
   const result = checkPriceDrop(400, 350);
 
-  assert.strictEqual(result.priceDropped, true);
-  assert.strictEqual(result.difference, 50);
+  expect(result.priceDropped).toBe(true);
+  expect(result.difference).toBe(50);
 });
 
 test("detect no price drop", () => {
   const result = checkPriceDrop(300, 350);
 
-  assert.strictEqual(result.priceDropped, false);
+  expect(result.priceDropped).toBe(false);
+  expect(result.difference).toBe(0);
 });
 
 test("track part then observe drop", () => {
@@ -25,5 +28,5 @@ test("track part then observe drop", () => {
 
   const result = observeNewPrice("gpu1", 450);
 
-  assert.strictEqual(result.priceDropped, true);
+  expect(result.priceDropped).toBe(true);
 });

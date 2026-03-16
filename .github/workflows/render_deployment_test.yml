@@ -1,0 +1,14 @@
+# .github/workflows/render-deploy.yml
+name: Deploy to Render
+
+on:
+  push:
+    branches:
+      - serverEdit
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy hook
+        run: curl -X POST "${{ secrets.RENDER_SERVER_TEST_DEPLOY_HOOK }}"
