@@ -29,8 +29,9 @@ async function postJson(path, payload) {
   return data;
 }
 
-export function register(email, password) {
-  return postJson("/auth/register", { email, password });
+export function register(email, password, options = {}) {
+  const { marketingOptIn = false } = options;
+  return postJson("/auth/register", { email, password, marketingOptIn });
 }
 
 export function login(email, password) {

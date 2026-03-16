@@ -53,6 +53,21 @@
   display: block;
 }
 
+.signup-form label.signup-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0.75rem 0 1rem;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.signup-form input[type="checkbox"] {
+  width: auto;
+  margin: 0.15rem 0 0;
+  padding: 0;
+}
+
 .signup-form button {
   width: 100%;
   padding: 0.75rem;
