@@ -4,11 +4,11 @@ name: Deploy to Render
 on:
   push:
     branches:
-      - main   # change this if you deploy from another branch
+      - serverEdit
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Render deploy hook
-        run: curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        run: curl -X POST "${{ secrets.RENDER_SERVER_TEST_DEPLOY_HOOK }}"
