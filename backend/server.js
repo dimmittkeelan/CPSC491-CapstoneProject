@@ -1,399 +1,549 @@
-import express from "express";
-import session from "express-session";
-import pg from "pg";
-import bcrypt from "bcrypt";
-import connectPgSimple from "connect-pg-simple";
-import dotenv from "dotenv";
-import { pathToFileURL } from "url";
-import { priceTrackingRouter } from "./routes/priceTracking.js";
+import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { createApp } from "../server.js";
 
-import {
-  checkCpuMotherboardCompatibility,
-  checkRamMotherboardCompatibility,
-  checkPsuWattageCompatibility,
-  checkRamCapacityCompatibility,
-} from "./compatibilityEngine.js";
-
-// Check if server is being ran by test suite
-dotenv.config({ quiet: process.env.NODE_ENV === "test" });
-
-function buildCompatibilityResponse(body = {}) {
-  const { cpu, motherboard, ram, gpu, psu } = body;
-
-  const cpuResult = checkCpuMotherboardCompatibility(cpu, motherboard);
-  const ramTypeResult = checkRamMotherboardCompatibility(ram, motherboard);
-  const psuResult = checkPsuWattageCompatibility(psu, cpu, gpu);
-  const ramCapacityResult = checkRamCapacityCompatibility(ram, motherboard);
-
-  const issues = [
-    ...cpuResult.issues,
-    ...ramTypeResult.issues,
-    ...psuResult.issues,
-    ...ramCapacityResult.issues,
-  ];
+function createPool(queryImpl = async () => ({ rows: [] })) {
+  const client = {
+    query: jest.fn(queryImpl),
+    release: jest.fn(),
+  };
 
   return {
-    compatible: issues.length === 0,
-    issues,
+    query: jest.fn(queryImpl),
+    connect: jest.fn(async () => client),
   };
 }
 
-function getClientIp(req) {
-  const forwardedFor = req.headers["x-forwarded-for"];
-
-  if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
-    return forwardedFor.split(",")[0].trim();
-  }
-
-  if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
-    return forwardedFor[0].trim();
-  }
-
-  return req.ip ?? req.socket?.remoteAddress ?? null;
-}
-
-export function createPool(connectionString = process.env.DATABASE_URL) {
-  return new pg.Pool({ connectionString });
-}
-
-export async function ensureAuthLogTable(pool) {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS auth_logs (
-      id BIGSERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      attempted_email TEXT,
-      event_type TEXT NOT NULL,
-      success BOOLEAN NOT NULL,
-      failure_reason TEXT,
-      ip_address TEXT,
-      user_agent TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-}
-
-export function createAuthLogger(pool) {
-  if (!pool) throw new Error("Pool is required");
-
-  return {
-    async logEvent({
-      userId = null,
-      attemptedEmail = null,
-      eventType,
-      success,
-      failureReason = null,
-      ipAddress = null,
-      userAgent = null,
-    }) {
-      await pool.query(
-        `INSERT INTO auth_logs
-          (user_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          userId,
-          attemptedEmail,
-          eventType,
-          success,
-          failureReason,
-          ipAddress,
-          userAgent,
-        ]
-      );
-    },
-
-    async getRecentEventsForUser({ userId, email, limit = 50 }) {
-      const { rows } = await pool.query(
-        `SELECT id, user_id, attempted_email, event_type, success, failure_reason, ip_address,
-                user_agent, created_at
-           FROM auth_logs
-          WHERE user_id = $1 OR attempted_email = $2
-          ORDER BY created_at DESC
-          LIMIT $3`,
-        [userId, email, limit]
-      );
-
-      return rows;
-    },
-  };
-}
-
-export function createSessionMiddleware(
-  pool,
-  sessionSecret = process.env.SESSION_SECRET
-) {
-  if (!sessionSecret) throw new Error("Session_secret missing!");
-
-  const PgSession = connectPgSimple(session);
-
-  return session({
-    store: new PgSession({
-      pool,
-      tableName: "session",
-      createTableIfMissing: true,
-    }),
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-      maxAge: 1000 * 60 * 60 * 8,
-    },
-  });
-}
-
-function requireAuth(req, res, next) {
-  if (!req.session?.userId)
-    return res.status(401).json({ ok: false, error: "Not Logged in" });
-  return next();
-}
-
-// Build app for tests
-export function createApp({
-  pool,
-  bcryptLib = bcrypt,
-  sessionMiddleware,
-  authLogger,
+function createBcrypt({
+  hashResult = "hashed-password",
+  compareResult = true,
 } = {}) {
-  if (!pool) throw new Error("Pool is required");
-  const resolvedSessionMiddleware =
-    sessionMiddleware ?? createSessionMiddleware(pool);
-  const resolvedAuthLogger = authLogger ?? createAuthLogger(pool);
+  return {
+    hash: jest.fn(async () => hashResult),
+    compare: jest.fn(async () => compareResult),
+  };
+}
 
-  const app = express();
-  app.use(express.json());
-  app.use("/api", priceTrackingRouter);
+function createSessionMiddleware() {
+  return (req, _res, next) => {
+    const userId = req.headers["x-test-user-id"];
+    const destroyFails = req.headers["x-test-destroy-error"] === "1";
 
-  app.get("/", (req, res) => {
-    res.type("text").send("ok");
+    req.session = {
+      userId: userId ? Number(userId) || userId : undefined,
+      destroy(callback) {
+        if (destroyFails) {
+          callback(new Error("destroy failed"));
+          return;
+        }
+
+        this.userId = undefined;
+        callback();
+      },
+    };
+
+    next();
+  };
+}
+
+function createAuthLogger({
+  events = [],
+} = {}) {
+  return {
+    logEvent: jest.fn(async (event) => {
+      events.push(event);
+    }),
+    getRecentEventsForEmail: jest.fn(async () => events),
+  };
+}
+
+async function startTestServer(overrides = {}) {
+  const app = createApp({
+    pool: overrides.pool ?? createPool(),
+    bcryptLib: overrides.bcryptLib ?? createBcrypt(),
+    sessionMiddleware: overrides.sessionMiddleware ?? createSessionMiddleware(),
+    authLogger: overrides.authLogger ?? createAuthLogger(),
   });
 
-  app.get("/favicon.ico", (req, res) => {
-    res.status(204).end();
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, "127.0.0.1");
+    instance.once("listening", () => resolve(instance));
+    instance.once("error", reject);
   });
 
-  app.post("/api/compatibility", (req, res) => {
-    return res.json(buildCompatibilityResponse(req.body));
+  return {
+    server,
+    baseUrl: `http://127.0.0.1:${server.address().port}`,
+  };
+}
+
+async function request(baseUrl, path, { method = "GET", headers, body } = {}) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      ...headers,
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
 
-  app.use(resolvedSessionMiddleware);
+  const contentType = response.headers.get("content-type") ?? "";
+  const parsedBody = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
 
-  app.post("/auth/register", async (req, res) => {
-    const { email, password } = req.body ?? {};
-    if (!email || !password)
-      return res.status(400).json({ ok: false, error: "email/password required" });
-    if (password.length < 10)
-      return res.status(400).json({
-        ok: false,
-        error: "Password needs to be at least length of 10.",
-      });
+  return { response, body: parsedBody };
+}
 
-    const passwordHash = await bcryptLib.hash(password, 12);
+describe("server routes", () => {
+  let activeServer;
+  let consoleErrorSpy;
 
-    try {
-      const result = await pool.query(
-        `INSERT INTO users(email, password_hash) VALUES ($1, $2) RETURNING id, email`,
-        [email.toLowerCase(), passwordHash]
-      );
+  beforeEach(() => {
+    process.env.SESSION_SECRET = "test-secret";
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
 
-      req.session.userId = result.rows[0].id;
-      await resolvedAuthLogger.logEvent({
-        userId: result.rows[0].id,
-        attemptedEmail: result.rows[0].email,
-        eventType: "register",
-        success: true,
-        ipAddress: getClientIp(req),
-        userAgent: req.get("user-agent") ?? null,
-      });
-      return res.json({ ok: true, user: result.rows[0] });
-    } catch (e) {
-      const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
-
-      if (e.code === "23505")
-        await resolvedAuthLogger.logEvent({
-          attemptedEmail: normalizedEmail,
-          eventType: "register",
-          success: false,
-          failureReason: "email_exists",
-          ipAddress: getClientIp(req),
-          userAgent: req.get("user-agent") ?? null,
+  afterEach(async () => {
+    if (activeServer) {
+      await new Promise((resolve, reject) => {
+        activeServer.close((error) => {
+          if (error) reject(error);
+          else resolve();
         });
-
-      if (e.code === "23505")
-        return res.status(409).json({ ok: false, error: "Email already exists" });
-
-      await resolvedAuthLogger.logEvent({
-        attemptedEmail: normalizedEmail,
-        eventType: "register",
-        success: false,
-        failureReason: "server_error",
-        ipAddress: getClientIp(req),
-        userAgent: req.get("user-agent") ?? null,
       });
-      console.error(e);
-      return res.status(500).json({ ok: false, error: "Server error" });
+      activeServer = undefined;
     }
+
+    jest.restoreAllMocks();
+    consoleErrorSpy = undefined;
   });
 
-  app.post("/auth/login", async (req, res) => {
-    try {
-      const { email, password } = req.body ?? {};
-      const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
+  async function boot(overrides) {
+    const started = await startTestServer(overrides);
+    activeServer = started.server;
+    return started.baseUrl;
+  }
 
-      if (!email || !password)
-        await resolvedAuthLogger.logEvent({
-          attemptedEmail: normalizedEmail,
-          eventType: "login",
-          success: false,
-          failureReason: "missing_credentials",
-          ipAddress: getClientIp(req),
-          userAgent: req.get("user-agent") ?? null,
-        });
+  test("GET / returns ok text", async () => {
+    const baseUrl = await boot();
 
-      if (!email || !password)
-        return res
-          .status(400)
-          .json({ ok: false, error: "email/password required" });
+    const { response, body } = await request(baseUrl, "/");
 
-      const { rows } = await pool.query(
-        `SELECT id, email, password_hash FROM users WHERE email = $1`,
-        [normalizedEmail]
-      );
-
-      if (rows.length === 0) {
-        await resolvedAuthLogger.logEvent({
-          attemptedEmail: normalizedEmail,
-          eventType: "login",
-          success: false,
-          failureReason: "invalid_credentials",
-          ipAddress: getClientIp(req),
-          userAgent: req.get("user-agent") ?? null,
-        });
-        return res.status(401).json({ ok: false, error: "Invalid credentials" });
-      }
-
-      const user = rows[0];
-
-      const ok = await bcryptLib.compare(password, user.password_hash);
-      if (!ok) {
-        await resolvedAuthLogger.logEvent({
-          userId: user.id,
-          attemptedEmail: user.email,
-          eventType: "login",
-          success: false,
-          failureReason: "invalid_credentials",
-          ipAddress: getClientIp(req),
-          userAgent: req.get("user-agent") ?? null,
-        });
-        return res.status(401).json({ ok: false, error: "Invalid credentials" });
-      }
-
-      req.session.userId = user.id;
-      await resolvedAuthLogger.logEvent({
-        userId: user.id,
-        attemptedEmail: user.email,
-        eventType: "login",
-        success: true,
-        ipAddress: getClientIp(req),
-        userAgent: req.get("user-agent") ?? null,
-      });
-      return res.json({ ok: true, user: { id: user.id, email: user.email } });
-    } catch (e) {
-      await resolvedAuthLogger.logEvent({
-        attemptedEmail:
-          typeof req.body?.email === "string" ? req.body.email.toLowerCase() : null,
-        eventType: "login",
-        success: false,
-        failureReason: "server_error",
-        ipAddress: getClientIp(req),
-        userAgent: req.get("user-agent") ?? null,
-      });
-      console.error(e);
-      return res.status(500).json({ ok: false, error: "Server error" });
-    }
+    expect(response.status).toBe(200);
+    expect(body).toBe("ok");
   });
 
-  app.get("/auth/me", requireAuth, async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        "SELECT id, email FROM users WHERE id = $1",
-        [req.session.userId]
-      );
-      return res.json({ ok: true, user: rows[0] });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: "Server error" });
-    }
+  test("GET /favicon.ico returns 204", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/favicon.ico");
+
+    expect(response.status).toBe(204);
+    expect(body).toBe("");
   });
 
-  app.post("/auth/logout", (req, res) => {
-    req.session.destroy((err) => {
-      if (err) return res.status(500).json({ ok: false, error: "Logout failed" });
-      res.clearCookie("connect.sid");
-      return res.json({ ok: true });
+  test("POST /api/compatibility returns compatible true when parts match", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/api/compatibility", {
+      method: "POST",
+      body: {
+        cpu: { socket: "AM5", tdp: 105 },
+        motherboard: { socket: "AM5", ramType: "DDR5", maxRam: 128 },
+        ram: { type: "DDR5", capacity: 32 },
+        gpu: { tdp: 200 },
+        psu: { wattage: 700 },
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ compatible: true, issues: [] });
+  });
+
+  test("POST /api/compatibility aggregates incompatibility issues", async () => {
+    const baseUrl = await boot();
+
+    const { body } = await request(baseUrl, "/api/compatibility", {
+      method: "POST",
+      body: {
+        cpu: { socket: "AM5", tdp: 120 },
+        motherboard: { socket: "LGA1700", ramType: "DDR5", maxRam: 64 },
+        ram: { type: "DDR4", capacity: 128 },
+        gpu: { tdp: 320 },
+        psu: { wattage: 450 },
+      },
+    });
+
+    expect(body.compatible).toBe(false);
+    expect(body.issues.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("POST /auth/register rejects missing credentials", async () => {
+    const bcryptLib = createBcrypt();
+    const pool = createPool();
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, bcryptLib, authLogger });
+
+    const { response, body } = await request(baseUrl, "/auth/register", {
+      method: "POST",
+      body: { email: "", password: "" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "email/password required" });
+    expect(bcryptLib.hash).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(authLogger.logEvent).not.toHaveBeenCalled();
+  });
+
+  test("POST /auth/register rejects short passwords", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/auth/register", {
+      method: "POST",
+      body: { email: "user@example.com", password: "short" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      ok: false,
+      error: "Password needs to be at least length of 10.",
     });
   });
 
-  app.get("/auth/logs", requireAuth, async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        "SELECT id, email FROM users WHERE id = $1",
-        [req.session.userId]
-      );
+  test("POST /auth/register creates a user and lowercases email", async () => {
+    const bcryptLib = createBcrypt({ hashResult: "hashed-value" });
+    const pool = createPool(
+      jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ uid: 10, username: null, email: "user@example.com" }],
+        }) // INSERT users
+        .mockResolvedValueOnce({
+          rows: [{ auth_id: 99 }],
+        }) // INSERT auth
+        .mockResolvedValueOnce({ rows: [] }) // COMMIT
+    );
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, bcryptLib, authLogger });
 
-      if (rows.length === 0) {
-        return res.status(404).json({ ok: false, error: "User not found" });
+    const { response, body } = await request(baseUrl, "/auth/register", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": "203.0.113.10",
+        "user-agent": "jest-test-agent",
+      },
+      body: { email: "User@Example.com", password: "long-password" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      user: { uid: 10, username: null, email: "user@example.com" },
+    });
+    expect(bcryptLib.hash).toHaveBeenCalledWith("long-password", 12);
+    expect(pool.connect).toHaveBeenCalled();
+    expect(authLogger.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authId: 99,
+        attemptedEmail: "user@example.com",
+        eventType: "register",
+        success: true,
+        ipAddress: "203.0.113.10",
+        userAgent: "jest-test-agent",
+      })
+    );
+  });
+
+  test("POST /auth/register returns 409 on duplicate email", async () => {
+    const pool = createPool(async () => {
+      const error = new Error("duplicate");
+      error.code = "23505";
+      throw error;
+    });
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, authLogger });
+
+    const { response, body } = await request(baseUrl, "/auth/register", {
+      method: "POST",
+      body: { email: "user@example.com", password: "long-password" },
+    });
+
+    expect(response.status).toBe(409);
+    expect(body).toEqual({ ok: false, error: "Email already exists" });
+    expect(authLogger.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptedEmail: "user@example.com",
+        eventType: "register",
+        success: false,
+        failureReason: "email_exists",
+      })
+    );
+  });
+
+  test("POST /auth/login rejects missing credentials", async () => {
+    const pool = createPool();
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, authLogger });
+
+    const { response, body } = await request(baseUrl, "/auth/login", {
+      method: "POST",
+      body: {},
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "email/password required" });
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(authLogger.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptedEmail: null,
+        eventType: "login",
+        success: false,
+        failureReason: "missing_credentials",
+      })
+    );
+  });
+
+  test("POST /auth/login rejects unknown users", async () => {
+    const pool = createPool(async () => ({ rows: [] }));
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, authLogger });
+
+    const { response, body } = await request(baseUrl, "/auth/login", {
+      method: "POST",
+      body: { email: "user@example.com", password: "long-password" },
+    });
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({ ok: false, error: "Invalid credentials" });
+    expect(authLogger.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptedEmail: "user@example.com",
+        eventType: "login",
+        success: false,
+        failureReason: "invalid_credentials",
+      })
+    );
+  });
+
+  test("POST /auth/login rejects incorrect password", async () => {
+    const pool = createPool(async () => ({
+      rows: [
+        {
+          uid: 7,
+          username: null,
+          email: "user@example.com",
+          auth_id: 55,
+          password_hash: "hash",
+          account_lock: false,
+          two_fa: false,
+        },
+      ],
+    }));
+    const bcryptLib = createBcrypt({ compareResult: false });
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, bcryptLib, authLogger });
+
+    const { response, body } = await request(baseUrl, "/auth/login", {
+      method: "POST",
+      body: { email: "user@example.com", password: "wrong-password" },
+    });
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({ ok: false, error: "Invalid credentials" });
+    expect(bcryptLib.compare).toHaveBeenCalledWith("wrong-password", "hash");
+    expect(authLogger.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authId: 55,
+        attemptedEmail: "user@example.com",
+        eventType: "login",
+        success: false,
+        failureReason: "invalid_credentials",
+      })
+    );
+  });
+
+  test("POST /auth/login returns user payload on success", async () => {
+    const pool = createPool(async () => ({
+      rows: [
+        {
+          uid: 7,
+          username: null,
+          email: "user@example.com",
+          auth_id: 55,
+          password_hash: "hash",
+          account_lock: false,
+          two_fa: false,
+        },
+      ],
+    }));
+    const bcryptLib = createBcrypt({ compareResult: true });
+    const authLogger = createAuthLogger();
+    const baseUrl = await boot({ pool, bcryptLib, authLogger });
+
+    const { response, body } = await request(baseUrl, "/auth/login", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": "198.51.100.20",
+        "user-agent": "security-audit-test",
+      },
+      body: { email: "USER@EXAMPLE.COM", password: "long-password" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      user: { uid: 7, username: null, email: "user@example.com" },
+    });
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM users u"),
+      ["user@example.com"]
+    );
+    expect(authLogger.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authId: 55,
+        attemptedEmail: "user@example.com",
+        eventType: "login",
+        success: true,
+        ipAddress: "198.51.100.20",
+        userAgent: "security-audit-test",
+      })
+    );
+  });
+
+  test("GET /auth/me rejects unauthenticated requests", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/auth/me");
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({ ok: false, error: "Not Logged in" });
+  });
+
+  test("GET /auth/me returns the current user when authenticated", async () => {
+    const pool = createPool(async () => ({
+      rows: [{ uid: 42, email: "user@example.com" }],
+    }));
+    const baseUrl = await boot({ pool });
+
+    const { response, body } = await request(baseUrl, "/auth/me", {
+      headers: { "x-test-user-id": "42" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      user: { uid: 42, email: "user@example.com" },
+    });
+    expect(pool.query).toHaveBeenCalledWith(
+      "SELECT uid, email FROM users WHERE uid = $1",
+      [42]
+    );
+  });
+
+  test("POST /auth/logout clears the session", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/auth/logout", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ ok: true });
+  });
+
+  test("POST /auth/logout returns 500 when session destruction fails", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/auth/logout", {
+      method: "POST",
+      headers: { "x-test-destroy-error": "1" },
+    });
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ ok: false, error: "Logout failed" });
+  });
+
+  test("GET /auth/logs returns current user's auth history", async () => {
+    const pool = createPool(async (queryText) => {
+      if (queryText.includes("SELECT uid, email FROM users")) {
+        return { rows: [{ uid: 42, email: "user@example.com" }] };
       }
 
-      const logs = await resolvedAuthLogger.getRecentEventsForUser({
-        userId: rows[0].id,
-        email: rows[0].email,
-      });
+      return { rows: [] };
+    });
+    const authLogger = createAuthLogger({
+      events: [
+        {
+          log_id: 1,
+          event_type: "login",
+          success: true,
+          attempted_email: "user@example.com",
+          created_at: "2026-03-13T12:00:00.000Z",
+        },
+        {
+          log_id: 2,
+          event_type: "login",
+          success: false,
+          attempted_email: "user@example.com",
+          failure_reason: "invalid_credentials",
+          created_at: "2026-03-13T11:00:00.000Z",
+        },
+      ],
+    });
+    const baseUrl = await boot({ pool, authLogger });
 
-      return res.json({ ok: true, logs });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: "Server error" });
-    }
+    const { response, body } = await request(baseUrl, "/auth/logs", {
+      headers: { "x-test-user-id": "42" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      logs: [
+        {
+          log_id: 1,
+          event_type: "login",
+          success: true,
+          attempted_email: "user@example.com",
+          created_at: "2026-03-13T12:00:00.000Z",
+        },
+        {
+          log_id: 2,
+          event_type: "login",
+          success: false,
+          attempted_email: "user@example.com",
+          failure_reason: "invalid_credentials",
+          created_at: "2026-03-13T11:00:00.000Z",
+        },
+      ],
+    });
+    expect(authLogger.getRecentEventsForEmail).toHaveBeenCalledWith({
+      email: "user@example.com",
+    });
   });
 
-  app.get("/health", async (req, res) => {
-    try {
-      const r = await pool.query("SELECT 1 as ok");
-      res.json({ ok: true, db: r.rows[0].ok });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ ok: false, error: "db down" });
-    }
+  test("GET /health reports database availability", async () => {
+    const pool = createPool(async () => ({ rows: [{ ok: 1 }] }));
+    const baseUrl = await boot({ pool });
+
+    const { response, body } = await request(baseUrl, "/health");
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ ok: true, db: 1 });
   });
 
-  return app;
-}
+  test("GET /health returns 500 when the database query fails", async () => {
+    const pool = createPool(async () => {
+      throw new Error("db unavailable");
+    });
+    const baseUrl = await boot({ pool });
 
-export function startServer({
-  port = process.env.PORT ?? 3001,
-  pool = createPool(),
-  sessionMiddleware,
-  bcryptLib = bcrypt,
-  authLogger,
-} = {}) {
-  ensureAuthLogTable(pool).catch((error) => {
-    console.error("Failed to initialize auth_logs table", error);
+    const { response, body } = await request(baseUrl, "/health");
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ ok: false, error: "db down" });
   });
-
-  const app = createApp({
-    pool,
-    sessionMiddleware: sessionMiddleware ?? createSessionMiddleware(pool),
-    bcryptLib,
-    authLogger: authLogger ?? createAuthLogger(pool),
-  });
-
-  return app.listen(port, () => {
-    console.log(`Listening on ${port}`);
-  });
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startServer();
-}
+});
