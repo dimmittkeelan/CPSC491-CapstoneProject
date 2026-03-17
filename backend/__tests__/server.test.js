@@ -14,9 +14,9 @@ function createPool(queryImpl = async () => ({ rows: [] })) {
 }
 
 function createBcrypt({
-                        hashResult = "hashed-password",
-                        compareResult = true,
-                      } = {}) {
+  hashResult = "hashed-password",
+  compareResult = true,
+} = {}) {
   return {
     hash: jest.fn(async () => hashResult),
     compare: jest.fn(async () => compareResult),
@@ -46,8 +46,8 @@ function createSessionMiddleware() {
 }
 
 function createAuthLogger({
-                            events = [],
-                          } = {}) {
+  events = [],
+} = {}) {
   return {
     logEvent: jest.fn(async (event) => {
       events.push(event);
@@ -88,8 +88,8 @@ async function request(baseUrl, path, { method = "GET", headers, body } = {}) {
 
   const contentType = response.headers.get("content-type") ?? "";
   const parsedBody = contentType.includes("application/json")
-      ? await response.json()
-      : await response.text();
+    ? await response.json()
+    : await response.text();
 
   return { response, body: parsedBody };
 }
@@ -215,16 +215,16 @@ describe("server routes", () => {
   test("POST /auth/register creates a user and lowercases email", async () => {
     const bcryptLib = createBcrypt({ hashResult: "hashed-value" });
     const pool = createPool(
-        jest
-            .fn()
-            .mockResolvedValueOnce({ rows: [] }) // BEGIN
-            .mockResolvedValueOnce({
-              rows: [{ uid: 10, username: null, email: "user@example.com" }],
-            }) // INSERT users
-            .mockResolvedValueOnce({
-              rows: [{ auth_id: 99 }],
-            }) // INSERT auth
-            .mockResolvedValueOnce({ rows: [] }) // COMMIT
+      jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ uid: 10, username: null, email: "user@example.com" }],
+        }) // INSERT users
+        .mockResolvedValueOnce({
+          rows: [{ auth_id: 99 }],
+        }) // INSERT auth
+        .mockResolvedValueOnce({ rows: [] }) // COMMIT
     );
     const authLogger = createAuthLogger();
     const baseUrl = await boot({ pool, bcryptLib, authLogger });
@@ -246,14 +246,14 @@ describe("server routes", () => {
     expect(bcryptLib.hash).toHaveBeenCalledWith("long-password", 12);
     expect(pool.connect).toHaveBeenCalled();
     expect(authLogger.logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          authId: 99,
-          attemptedEmail: "user@example.com",
-          eventType: "register",
-          success: true,
-          ipAddress: "203.0.113.10",
-          userAgent: "jest-test-agent",
-        })
+      expect.objectContaining({
+        authId: 99,
+        attemptedEmail: "user@example.com",
+        eventType: "register",
+        success: true,
+        ipAddress: "203.0.113.10",
+        userAgent: "jest-test-agent",
+      })
     );
   });
 
@@ -274,12 +274,12 @@ describe("server routes", () => {
     expect(response.status).toBe(409);
     expect(body).toEqual({ ok: false, error: "Email already exists" });
     expect(authLogger.logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          attemptedEmail: "user@example.com",
-          eventType: "register",
-          success: false,
-          failureReason: "email_exists",
-        })
+      expect.objectContaining({
+        attemptedEmail: "user@example.com",
+        eventType: "register",
+        success: false,
+        failureReason: "email_exists",
+      })
     );
   });
 
@@ -297,12 +297,12 @@ describe("server routes", () => {
     expect(body).toEqual({ ok: false, error: "email/password required" });
     expect(pool.query).not.toHaveBeenCalled();
     expect(authLogger.logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          attemptedEmail: null,
-          eventType: "login",
-          success: false,
-          failureReason: "missing_credentials",
-        })
+      expect.objectContaining({
+        attemptedEmail: null,
+        eventType: "login",
+        success: false,
+        failureReason: "missing_credentials",
+      })
     );
   });
 
@@ -319,12 +319,12 @@ describe("server routes", () => {
     expect(response.status).toBe(401);
     expect(body).toEqual({ ok: false, error: "Invalid credentials" });
     expect(authLogger.logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          attemptedEmail: "user@example.com",
-          eventType: "login",
-          success: false,
-          failureReason: "invalid_credentials",
-        })
+      expect.objectContaining({
+        attemptedEmail: "user@example.com",
+        eventType: "login",
+        success: false,
+        failureReason: "invalid_credentials",
+      })
     );
   });
 
@@ -355,13 +355,13 @@ describe("server routes", () => {
     expect(body).toEqual({ ok: false, error: "Invalid credentials" });
     expect(bcryptLib.compare).toHaveBeenCalledWith("wrong-password", "hash");
     expect(authLogger.logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          authId: 55,
-          attemptedEmail: "user@example.com",
-          eventType: "login",
-          success: false,
-          failureReason: "invalid_credentials",
-        })
+      expect.objectContaining({
+        authId: 55,
+        attemptedEmail: "user@example.com",
+        eventType: "login",
+        success: false,
+        failureReason: "invalid_credentials",
+      })
     );
   });
 
@@ -398,18 +398,18 @@ describe("server routes", () => {
       user: { uid: 7, username: null, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining("FROM users u"),
-        ["user@example.com"]
+      expect.stringContaining("FROM users u"),
+      ["user@example.com"]
     );
     expect(authLogger.logEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          authId: 55,
-          attemptedEmail: "user@example.com",
-          eventType: "login",
-          success: true,
-          ipAddress: "198.51.100.20",
-          userAgent: "security-audit-test",
-        })
+      expect.objectContaining({
+        authId: 55,
+        attemptedEmail: "user@example.com",
+        eventType: "login",
+        success: true,
+        ipAddress: "198.51.100.20",
+        userAgent: "security-audit-test",
+      })
     );
   });
 
@@ -438,8 +438,8 @@ describe("server routes", () => {
       user: { uid: 42, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
-        "SELECT uid, email FROM users WHERE uid = $1",
-        [42]
+      "SELECT uid, email FROM users WHERE uid = $1",
+      [42]
     );
   });
 
