@@ -795,17 +795,32 @@ export function createApp({
     }
 
     try {
-      // Verify current password
-      const { rows } = await pool.query(
-        `SELECT id, email, password_hash FROM users WHERE id = $1`,
-        [req.session.userId]
-      );
+      // Verify current password using the same approach as findUserByEmail
+      let result;
+      try {
+        result = await pool.query(
+          `SELECT id, email, password_hash FROM users WHERE id = $1`,
+          [req.session.userId]
+        );
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
 
-      if (rows.length === 0) {
+        result = await pool.query(
+          `SELECT users.uid AS id, users.email, auth.password_hash
+           FROM users
+           JOIN auth ON auth.uid = users.uid
+           WHERE users.uid = $1`,
+          [req.session.userId]
+        );
+      }
+
+      if (result.rows.length === 0) {
         return res.status(404).json({ ok: false, error: "User not found" });
       }
 
-      const user = rows[0];
+      const user = result.rows[0];
       const passwordValid = await resolvedBcrypt.compare(currentPassword, user.password_hash);
 
       if (!passwordValid) {
@@ -827,10 +842,22 @@ export function createApp({
 
       // Hash new password and update
       const newPasswordHash = await resolvedBcrypt.hash(newPassword, 12);
-      await pool.query(
-        `UPDATE users SET password_hash = $1 WHERE id = $2`,
-        [newPasswordHash, req.session.userId]
-      );
+      
+      try {
+        await pool.query(
+          `UPDATE users SET password_hash = $1 WHERE id = $2`,
+          [newPasswordHash, req.session.userId]
+        );
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+
+        await pool.query(
+          `UPDATE auth SET password_hash = $1 WHERE uid = $2`,
+          [newPasswordHash, req.session.userId]
+        );
+      }
 
       await safeLogAuthEvent({
         userId: user.id,
