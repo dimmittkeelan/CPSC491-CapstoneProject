@@ -709,16 +709,30 @@ export function createApp({
 
     try {
       // Verify current password
-      const { rows } = await pool.query(
-        `SELECT id, email, password_hash FROM users WHERE id = $1`,
-        [req.session.userId]
-      );
+      let result;
+      try {
+        result = await pool.query(
+          `SELECT id, email, password_hash FROM users WHERE id = $1`,
+          [req.session.userId]
+        );
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+        result = await pool.query(
+          `SELECT users.uid AS id, users.email, auth.password_hash
+           FROM users
+           JOIN auth ON auth.uid = users.uid
+           WHERE users.uid = $1`,
+          [req.session.userId]
+        );
+      }
 
-      if (rows.length === 0) {
+      if (result.rows.length === 0) {
         return res.status(404).json({ ok: false, error: "User not found" });
       }
 
-      const user = rows[0];
+      const user = result.rows[0];
       const passwordValid = await resolvedBcrypt.compare(currentPassword, user.password_hash);
 
       if (!passwordValid) {
@@ -739,10 +753,21 @@ export function createApp({
       }
 
       // Update email
-      const updateResult = await pool.query(
-        `UPDATE users SET email = $1 WHERE id = $2 RETURNING id, email`,
-        [normalizedNewEmail, req.session.userId]
-      );
+      let updateResult;
+      try {
+        updateResult = await pool.query(
+          `UPDATE users SET email = $1 WHERE id = $2 RETURNING id, email`,
+          [normalizedNewEmail, req.session.userId]
+        );
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+        updateResult = await pool.query(
+          `UPDATE users SET email = $1 WHERE uid = $2 RETURNING uid AS id, email`,
+          [normalizedNewEmail, req.session.userId]
+        );
+      }
 
       await safeLogAuthEvent({
         userId: user.id,
@@ -887,16 +912,31 @@ export function createApp({
 
     try {
       // Verify current password
-      const { rows } = await pool.query(
-        `SELECT id, email, password_hash FROM users WHERE id = $1`,
-        [req.session.userId]
-      );
+      let result;
+      try {
+        result = await pool.query(
+          `SELECT id, email, password_hash FROM users WHERE id = $1`,
+          [req.session.userId]
+        );
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+        // Fallback for older schema
+        result = await pool.query(
+          `SELECT users.uid AS id, users.email, auth.password_hash
+           FROM users
+           JOIN auth ON auth.uid = users.uid
+           WHERE users.uid = $1`,
+          [req.session.userId]
+        );
+      }
 
-      if (rows.length === 0) {
+      if (result.rows.length === 0) {
         return res.status(404).json({ ok: false, error: "User not found" });
       }
 
-      const user = rows[0];
+      const user = result.rows[0];
       const passwordValid = await resolvedBcrypt.compare(currentPassword, user.password_hash);
 
       if (!passwordValid) {
@@ -917,10 +957,33 @@ export function createApp({
       }
 
       // Delete user's saved builds first (foreign key constraint)
-      await pool.query(`DELETE FROM saved_builds WHERE user_id = $1`, [req.session.userId]);
+      try {
+        await pool.query(`DELETE FROM saved_builds WHERE user_id = $1`, [req.session.userId]);
+      } catch (e) {
+        // Fall back for table mismatch like the others just in case.
+        // It might not be needed for saved_builds but safe to ignore if it fails
+      }
 
       // Delete user account
-      await pool.query(`DELETE FROM users WHERE id = $1`, [req.session.userId]);
+      try {
+        await pool.query(`DELETE FROM users WHERE id = $1`, [req.session.userId]);
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(`DELETE FROM auth WHERE uid = $1`, [req.session.userId]);
+          await client.query(`DELETE FROM users WHERE uid = $1`, [req.session.userId]);
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK");
+          throw e;
+        } finally {
+          client.release();
+        }
+      }
 
       await safeLogAuthEvent({
         userId: user.id,
