@@ -66,3 +66,7 @@
   background-color: #9d4ced;
   transform: scale(1.05);
 }
+
+button.nav-button {
+  cursor: pointer;
+}

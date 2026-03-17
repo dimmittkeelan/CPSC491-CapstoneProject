@@ -1,37 +1,46 @@
 import React, { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import "../styles/Login.css";
+import { login } from "../services/authApi";
 
 export default function Login() {
-  const [username, setUsername] = useState("");
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // TODO: Replace this console.log with a POST request to the server
-    // Example using fetch:
-    // fetch("http://localhost:5000/login", {
-    //   method: "POST",
-    //   headers: { "Content-Type": "application/json" },
-    //   body: JSON.stringify({ username, password }),
-    // })
-    //   .then((response) => response.json())
-    //   .then((data) => console.log(data))
-    //   .catch((error) => console.error("Error:", error));
-    console.log("Username:", username);
-    console.log("Password:", password);
+
+    setError("");
+    setIsSubmitting(true);
+
+    try {
+      await login(email, password);
+      window.location.replace("/");
+    } catch (err) {
+      setError(err.message || "Unable to login.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="login-container">
       <form className="login-form" onSubmit={handleSubmit}>
         <h2>Login</h2>
-        <label htmlFor="username">Username</label>
+        {error ? <p className="form-error">{error}</p> : null}
+
+        <label htmlFor="email">Email</label>
         <input
-          type="text"
-          id="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="Enter your username"
+          type="email"
+          id="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Enter your email"
+          autoComplete="email"
+          required
         />
         <label htmlFor="password">Password</label>
         <input
@@ -40,8 +49,16 @@ export default function Login() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Enter your password"
+          autoComplete="current-password"
+          required
         />
-        <button type="submit">Login</button>
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Logging in..." : "Login"}
+        </button>
+
+        <p className="signup-redirect">
+          Need an account? <Link to="/signup">Create one</Link>
+        </p>
       </form>
     </div>
   );

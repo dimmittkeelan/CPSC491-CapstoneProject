@@ -61,6 +61,60 @@
   font-weight: 600;
 }
 
+.buildActions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.buildSaveButton,
+.buildSavedLink {
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.buildSaveButton {
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(135deg, #8a2be2, #a34af2);
+  color: #fff;
+}
+
+.buildSaveButton:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.buildSavedLink {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.buildMessage {
+  max-width: 560px;
+  margin: 12px auto 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.buildMessage--success {
+  color: #d8ffe8;
+  border: 1px solid rgba(90, 220, 150, 0.45);
+  background: rgba(90, 220, 150, 0.12);
+}
+
+.buildMessage--error {
+  color: #ffd2d2;
+  border: 1px solid rgba(255, 110, 120, 0.5);
+  background: rgba(255, 110, 120, 0.14);
+}
+
 .buildCanvas {
   position: relative;
   max-width: 1080px;

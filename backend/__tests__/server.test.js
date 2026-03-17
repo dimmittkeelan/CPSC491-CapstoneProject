@@ -443,6 +443,116 @@ describe("server routes", () => {
     );
   });
 
+  test("POST /builds saves a build for the authenticated user", async () => {
+    const pool = createPool(async (queryText) => {
+      if (queryText.includes("INSERT INTO saved_builds")) {
+        return {
+          rows: [
+            {
+              id: 5,
+              title: "Balanced 1080p Starter",
+              total_price: "897.00",
+              budget: "1000.00",
+              compatible: true,
+              performance_score: 74,
+              parts: { cpu: { name: "Ryzen 5 5600X" } },
+              created_at: "2026-03-16T10:00:00.000Z",
+            },
+          ],
+        };
+      }
+
+      return { rows: [] };
+    });
+    const baseUrl = await boot({ pool });
+
+    const { response, body } = await request(baseUrl, "/builds", {
+      method: "POST",
+      headers: { "x-test-user-id": "42" },
+      body: {
+        title: "Balanced 1080p Starter",
+        totalPrice: 897,
+        budget: 1000,
+        compatible: true,
+        performanceScore: 74,
+        parts: { cpu: { name: "Ryzen 5 5600X" } },
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      build: {
+        id: 5,
+        title: "Balanced 1080p Starter",
+        totalPrice: 897,
+        budget: 1000,
+        compatible: true,
+        performanceScore: 74,
+        parts: { cpu: { name: "Ryzen 5 5600X" } },
+        createdAt: "2026-03-16T10:00:00.000Z",
+      },
+    });
+  });
+
+  test("GET /builds/mine returns the authenticated user's saved builds", async () => {
+    const pool = createPool(async (queryText) => {
+      if (queryText.includes("FROM saved_builds")) {
+        return {
+          rows: [
+            {
+              id: 7,
+              title: "Creator Midrange Build",
+              total_price: "1325.00",
+              budget: "1400.00",
+              compatible: true,
+              performance_score: 86,
+              parts: { gpu: { name: "RTX 4070" } },
+              created_at: "2026-03-15T08:00:00.000Z",
+            },
+          ],
+        };
+      }
+
+      return { rows: [] };
+    });
+    const baseUrl = await boot({ pool });
+
+    const { response, body } = await request(baseUrl, "/builds/mine", {
+      headers: { "x-test-user-id": "42" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      builds: [
+        {
+          id: 7,
+          title: "Creator Midrange Build",
+          totalPrice: 1325,
+          budget: 1400,
+          compatible: true,
+          performanceScore: 86,
+          parts: { gpu: { name: "RTX 4070" } },
+          createdAt: "2026-03-15T08:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  test("DELETE /builds/:buildId removes a saved build for the authenticated user", async () => {
+    const pool = createPool(async () => ({ rowCount: 1, rows: [] }));
+    const baseUrl = await boot({ pool });
+
+    const { response, body } = await request(baseUrl, "/builds/7", {
+      method: "DELETE",
+      headers: { "x-test-user-id": "42" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ ok: true });
+  });
+
   test("POST /auth/logout clears the session", async () => {
     const baseUrl = await boot();
 
