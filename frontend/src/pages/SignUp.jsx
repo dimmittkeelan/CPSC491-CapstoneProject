@@ -26,7 +26,7 @@ export default function SignUp() {
 
     try {
       await register(email, password, { marketingOptIn });
-      navigate("/", { replace: true });
+      window.location.replace("/");
     } catch (err) {
       setError(err.message || "Unable to sign up.");
     } finally {
