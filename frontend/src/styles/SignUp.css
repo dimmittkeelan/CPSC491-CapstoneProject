@@ -7,7 +7,10 @@
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background-color: #000; /* Matches the black background used in other pages */
+  background:
+    radial-gradient(900px 500px at 20% 10%, rgba(138, 43, 226, 0.2), transparent 60%),
+    radial-gradient(700px 400px at 80% 20%, rgba(78, 200, 255, 0.16), transparent 60%),
+    #09090d;
 }
 
 .signup-form {
@@ -27,6 +30,16 @@
   text-align: center;
 }
 
+.form-error {
+  color: #ff8f8f;
+  background: rgba(255, 99, 99, 0.12);
+  border: 1px solid rgba(255, 99, 99, 0.35);
+  border-radius: 4px;
+  padding: 0.65rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.92rem;
+}
+
 .signup-form label {
   display: block;
   margin-bottom: 0.5rem;
@@ -41,6 +54,21 @@
   border-radius: 4px;
   font-size: 1rem;
   display: block;
+}
+
+.signup-form label.signup-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0.75rem 0 1rem;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.signup-form input[type="checkbox"] {
+  width: auto;
+  margin: 0.15rem 0 0;
+  padding: 0;
 }
 
 .signup-form button {
@@ -58,6 +86,11 @@
 
 .signup-form button:hover {
   background-color: #9d4ced;
+}
+
+.signup-form button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 
 .login-redirect {
