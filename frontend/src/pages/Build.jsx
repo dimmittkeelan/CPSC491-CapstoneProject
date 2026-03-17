@@ -1,5 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import "../styles/build.css";
+import { getCurrentUser } from "../services/authApi";
+import { saveBuildForUser } from "../services/savedBuilds";
 
 const buildData = {
   totalPrice: 897,
@@ -65,6 +68,39 @@ function PartCard({ part }) {
 
 export default function Build() {
   const { totalPrice, budget, compatible, performanceScore, parts } = buildData;
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveBuild = async () => {
+    setSaveMessage("");
+    setSaveError("");
+    setIsSaving(true);
+
+    try {
+      const user = await getCurrentUser();
+
+      if (!user) {
+        setSaveError("Please sign in first to save builds to your dashboard.");
+        return;
+      }
+
+      saveBuildForUser(user, {
+        title: `${parts.cpu.name} + ${parts.gpu.name}`,
+        totalPrice,
+        budget,
+        compatible,
+        performanceScore,
+        parts,
+      });
+
+      setSaveMessage("Build saved. You can view it in Saved Builds.");
+    } catch (error) {
+      setSaveError(error.message || "Unable to save build right now.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="buildPage">
@@ -83,6 +119,18 @@ export default function Build() {
           </div>
           {compatible && <div className="budgetPill__badge">✓ Compatible</div>}
         </div>
+
+        <div className="buildActions">
+          <button className="buildSaveButton" type="button" onClick={handleSaveBuild} disabled={isSaving}>
+            {isSaving ? "Saving..." : "Save This Build"}
+          </button>
+          <Link className="buildSavedLink" to="/saved">
+            Go to Saved Builds
+          </Link>
+        </div>
+
+        {saveMessage ? <p className="buildMessage buildMessage--success">{saveMessage}</p> : null}
+        {saveError ? <p className="buildMessage buildMessage--error">{saveError}</p> : null}
       </header>
 
       <main className="buildCanvas">

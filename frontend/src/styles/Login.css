@@ -7,7 +7,10 @@
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background-color: #000; /* Matches the black background used in other pages */
+  background:
+    radial-gradient(900px 500px at 20% 10%, rgba(138, 43, 226, 0.2), transparent 60%),
+    radial-gradient(700px 400px at 80% 20%, rgba(78, 200, 255, 0.16), transparent 60%),
+    #09090d;
 }
 
 .login-form {

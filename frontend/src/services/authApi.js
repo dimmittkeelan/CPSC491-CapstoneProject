@@ -29,6 +29,30 @@ async function postJson(path, payload) {
   return data;
 }
 
+export async function getCurrentUser() {
+  const response = await fetch(resolveUrl("/auth/me"), {
+    method: "GET",
+    credentials: "include",
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (response.status === 401) {
+    return null;
+  }
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || "Unable to load current user");
+  }
+
+  return data.user;
+}
+
 export function register(email, password, options = {}) {
   const { marketingOptIn = false } = options;
   return postJson("/auth/register", { email, password, marketingOptIn });
