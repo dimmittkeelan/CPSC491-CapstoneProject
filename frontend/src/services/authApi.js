@@ -69,3 +69,35 @@ export async function logout() {
   });
   if (!response.ok) throw new Error("Logout failed");
 }
+
+export async function updateEmail(currentPassword, newEmail) {
+  return postJson("/auth/account/email", { currentPassword, newEmail });
+}
+
+export async function updatePassword(currentPassword, newPassword) {
+  return postJson("/auth/account/password", { currentPassword, newPassword });
+}
+
+export async function deleteAccount(currentPassword) {
+  const response = await fetch(resolveUrl("/auth/account"), {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify({ currentPassword, confirmDelete: true }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || "Unable to delete account");
+  }
+
+  return data;
+}

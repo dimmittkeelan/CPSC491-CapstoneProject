@@ -35,6 +35,7 @@ export default function Navbar() {
         <Link to="/" className="nav-link">Home</Link>
         <Link to="/build" className="nav-link">Get Started</Link>
         <Link to="/saved" className="nav-link">Saved Builds</Link>
+        {user && <Link to="/account" className="nav-link">Account</Link>}
       </div>
       {user ? (
         <button className="nav-button" onClick={handleLogout}>Logout</button>

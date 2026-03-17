@@ -686,6 +686,236 @@ export function createApp({
     }
   });
 
+  // Account modification endpoints
+  app.patch("/auth/account/email", requireAuth, async (req, res) => {
+    const { currentPassword, newEmail } = req.body ?? {};
+
+    if (!currentPassword || !newEmail) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Current password and new email required" 
+      });
+    }
+
+    const normalizedNewEmail = newEmail.toLowerCase().trim();
+
+    // Basic email validation
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedNewEmail)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Invalid email format" 
+      });
+    }
+
+    try {
+      // Verify current password
+      const { rows } = await pool.query(
+        `SELECT id, email, password_hash FROM users WHERE id = $1`,
+        [req.session.userId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ ok: false, error: "User not found" });
+      }
+
+      const user = rows[0];
+      const passwordValid = await resolvedBcrypt.compare(currentPassword, user.password_hash);
+
+      if (!passwordValid) {
+        await safeLogAuthEvent({
+          userId: user.id,
+          attemptedEmail: normalizedNewEmail,
+          eventType: "email_change",
+          success: false,
+          failureReason: "invalid_password",
+          ipAddress: getClientIp(req),
+          userAgent: req.get("user-agent") ?? null,
+        });
+
+        return res.status(401).json({ 
+          ok: false, 
+          error: "Current password is incorrect" 
+        });
+      }
+
+      // Update email
+      const updateResult = await pool.query(
+        `UPDATE users SET email = $1 WHERE id = $2 RETURNING id, email`,
+        [normalizedNewEmail, req.session.userId]
+      );
+
+      await safeLogAuthEvent({
+        userId: user.id,
+        attemptedEmail: normalizedNewEmail,
+        eventType: "email_change",
+        success: true,
+        ipAddress: getClientIp(req),
+        userAgent: req.get("user-agent") ?? null,
+      });
+
+      return res.json({ 
+        ok: true, 
+        user: updateResult.rows[0] 
+      });
+    } catch (e) {
+      if (e.code === "23505") {
+        return res.status(409).json({ 
+          ok: false, 
+          error: "Email already in use" 
+        });
+      }
+
+      console.error(e);
+      return res.status(500).json({ ok: false, error: "Server error" });
+    }
+  });
+
+  app.patch("/auth/account/password", requireAuth, async (req, res) => {
+    const { currentPassword, newPassword } = req.body ?? {};
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Current password and new password required" 
+      });
+    }
+
+    if (newPassword.length < 10) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "New password must be at least 10 characters" 
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "New password must be different from current password" 
+      });
+    }
+
+    try {
+      // Verify current password
+      const { rows } = await pool.query(
+        `SELECT id, email, password_hash FROM users WHERE id = $1`,
+        [req.session.userId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ ok: false, error: "User not found" });
+      }
+
+      const user = rows[0];
+      const passwordValid = await resolvedBcrypt.compare(currentPassword, user.password_hash);
+
+      if (!passwordValid) {
+        await safeLogAuthEvent({
+          userId: user.id,
+          attemptedEmail: user.email,
+          eventType: "password_change",
+          success: false,
+          failureReason: "invalid_password",
+          ipAddress: getClientIp(req),
+          userAgent: req.get("user-agent") ?? null,
+        });
+
+        return res.status(401).json({ 
+          ok: false, 
+          error: "Current password is incorrect" 
+        });
+      }
+
+      // Hash new password and update
+      const newPasswordHash = await resolvedBcrypt.hash(newPassword, 12);
+      await pool.query(
+        `UPDATE users SET password_hash = $1 WHERE id = $2`,
+        [newPasswordHash, req.session.userId]
+      );
+
+      await safeLogAuthEvent({
+        userId: user.id,
+        attemptedEmail: user.email,
+        eventType: "password_change",
+        success: true,
+        ipAddress: getClientIp(req),
+        userAgent: req.get("user-agent") ?? null,
+      });
+
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: "Server error" });
+    }
+  });
+
+  app.delete("/auth/account", requireAuth, async (req, res) => {
+    const { currentPassword, confirmDelete } = req.body ?? {};
+
+    if (!currentPassword || confirmDelete !== true) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Current password and confirmation required" 
+      });
+    }
+
+    try {
+      // Verify current password
+      const { rows } = await pool.query(
+        `SELECT id, email, password_hash FROM users WHERE id = $1`,
+        [req.session.userId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ ok: false, error: "User not found" });
+      }
+
+      const user = rows[0];
+      const passwordValid = await resolvedBcrypt.compare(currentPassword, user.password_hash);
+
+      if (!passwordValid) {
+        await safeLogAuthEvent({
+          userId: user.id,
+          attemptedEmail: user.email,
+          eventType: "account_delete",
+          success: false,
+          failureReason: "invalid_password",
+          ipAddress: getClientIp(req),
+          userAgent: req.get("user-agent") ?? null,
+        });
+
+        return res.status(401).json({ 
+          ok: false, 
+          error: "Current password is incorrect" 
+        });
+      }
+
+      // Delete user's saved builds first (foreign key constraint)
+      await pool.query(`DELETE FROM saved_builds WHERE user_id = $1`, [req.session.userId]);
+
+      // Delete user account
+      await pool.query(`DELETE FROM users WHERE id = $1`, [req.session.userId]);
+
+      await safeLogAuthEvent({
+        userId: user.id,
+        attemptedEmail: user.email,
+        eventType: "account_delete",
+        success: true,
+        ipAddress: getClientIp(req),
+        userAgent: req.get("user-agent") ?? null,
+      });
+
+      // Destroy session
+      req.session.destroy(() => {
+        res.clearCookie("connect.sid");
+      });
+
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: "Server error" });
+    }
+  });
+
   app.get("/health", async (req, res) => {
     try {
       const r = await pool.query("SELECT 1 as ok");
