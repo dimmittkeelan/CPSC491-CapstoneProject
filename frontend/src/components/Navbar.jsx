@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import "../styles/Navbar.css";
 import icon from "../assets/icon-no-bg.png";
@@ -7,12 +7,13 @@ import { getCurrentUser, logout } from "../services/authApi";
 export default function Navbar() {
   const [user, setUser] = useState(undefined);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     getCurrentUser()
       .then(setUser)
       .catch(() => setUser(null));
-  }, []);
+  }, [location.pathname]);
 
   async function handleLogout() {
     try {
