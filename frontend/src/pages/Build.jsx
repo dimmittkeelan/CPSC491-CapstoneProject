@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import "../styles/build.css";
 import { getCurrentUser } from "../services/authApi";
+import { createSavedBuild } from "../services/buildApi";
 import { saveBuildForUser } from "../services/savedBuilds";
 
 const buildData = {
@@ -85,16 +86,22 @@ export default function Build() {
         return;
       }
 
-      saveBuildForUser(user, {
+      const buildPayload = {
         title: `${parts.cpu.name} + ${parts.gpu.name}`,
         totalPrice,
         budget,
         compatible,
         performanceScore,
         parts,
-      });
+      };
 
-      setSaveMessage("Build saved. You can view it in Saved Builds.");
+      try {
+        await createSavedBuild(buildPayload);
+        setSaveMessage("Build saved. You can view it in Saved Builds.");
+      } catch {
+        saveBuildForUser(user, buildPayload);
+        setSaveMessage("Build saved locally. Backend sync is unavailable right now.");
+      }
     } catch (error) {
       setSaveError(error.message || "Unable to save build right now.");
     } finally {

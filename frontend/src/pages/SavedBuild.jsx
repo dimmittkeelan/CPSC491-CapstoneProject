@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getCurrentUser } from "../services/authApi";
+import { deleteSavedBuild, fetchSavedBuilds } from "../services/buildApi";
 import {
   getSavedBuildsForUser,
   removeSavedBuildForUser,
@@ -95,6 +96,7 @@ export default function SavedBuild() {
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [isLocalFallback, setIsLocalFallback] = useState(false);
   const [user, setUser] = useState(null);
   const [builds, setBuilds] = useState([]);
 
@@ -103,6 +105,7 @@ export default function SavedBuild() {
       setStatus("loading");
       setError("");
       setIsDemoMode(false);
+      setIsLocalFallback(false);
 
       try {
         const currentUser = await getCurrentUser();
@@ -113,7 +116,13 @@ export default function SavedBuild() {
         }
 
         setUser(currentUser);
-        setBuilds(getSavedBuildsForUser(currentUser));
+        try {
+          setBuilds(await fetchSavedBuilds());
+        } catch (buildError) {
+          setBuilds(getSavedBuildsForUser(currentUser));
+          setError(buildError.message || "Unable to load synced builds");
+          setIsLocalFallback(true);
+        }
         setStatus("ready");
       } catch (e) {
         setError(e.message || "Unable to connect to backend");
@@ -142,8 +151,19 @@ export default function SavedBuild() {
   const handleDelete = (buildId) => {
     if (!user) return;
 
-    removeSavedBuildForUser(user, buildId);
-    setBuilds((current) => current.filter((build) => build.id !== buildId));
+    if (isLocalFallback) {
+      removeSavedBuildForUser(user, buildId);
+      setBuilds((current) => current.filter((build) => build.id !== buildId));
+      return;
+    }
+
+    deleteSavedBuild(buildId)
+      .then(() => {
+        setBuilds((current) => current.filter((build) => build.id !== buildId));
+      })
+      .catch((deleteError) => {
+        setError(deleteError.message || "Unable to delete build right now");
+      });
   };
 
   return (
@@ -176,6 +196,12 @@ export default function SavedBuild() {
         {isDemoMode ? (
           <p className="saved-status saved-status--demo">
             Backend unavailable, showing example dashboard data for demo mode.
+          </p>
+        ) : null}
+
+        {isLocalFallback ? (
+          <p className="saved-status saved-status--fallback">
+            Showing local saved builds because backend sync is unavailable right now.
           </p>
         ) : null}
 

@@ -17,6 +17,73 @@ import {
 // Keep dotenv quiet during tests to reduce noise in test output.
 dotenv.config({ quiet: process.env.NODE_ENV === "test" });
 
+function parseBooleanEnv(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function parseAllowedOrigins(originsValue = process.env.FRONTEND_ORIGIN) {
+  if (!originsValue) return [];
+
+  return originsValue
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function applyCors(app, allowedOrigins = parseAllowedOrigins()) {
+  if (allowedOrigins.length === 0) return;
+
+  const allowedOriginSet = new Set(allowedOrigins);
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+
+    if (!origin || !allowedOriginSet.has(origin)) {
+      return next();
+    }
+
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.append("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+
+    return next();
+  });
+}
+
+function getSessionCookieConfig() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const configuredSameSite = process.env.SESSION_COOKIE_SAMESITE?.trim().toLowerCase();
+  const validSameSite = new Set(["lax", "strict", "none"]);
+  const sameSite = validSameSite.has(configuredSameSite)
+    ? configuredSameSite
+    : isProduction
+      ? "none"
+      : "lax";
+
+  let secure = parseBooleanEnv(process.env.SESSION_COOKIE_SECURE, isProduction);
+  if (sameSite === "none") {
+    secure = true;
+  }
+
+  return {
+    httpOnly: true,
+    sameSite,
+    secure,
+    maxAge: 1000 * 60 * 60 * 8,
+  };
+}
+
 function buildCompatibilityResponse(body = {}) {
   const { cpu, motherboard, ram, gpu, psu } = body;
 
@@ -73,6 +140,74 @@ export function createPool(connectionString = process.env.DATABASE_URL) {
   return new pg.Pool({ connectionString });
 }
 
+function isSchemaMismatchError(error) {
+  return ["42703", "42P01", "42704"].includes(error?.code);
+}
+
+async function createUserRecord(pool, email, passwordHash) {
+  try {
+    return await pool.query(
+      `INSERT INTO users(email, password_hash) VALUES ($1, $2) RETURNING id, email`,
+      [email, passwordHash]
+    );
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) {
+      throw error;
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const userResult = await client.query(
+        `INSERT INTO users(username, email) VALUES ($1, $2) RETURNING uid AS id, email`,
+        [null, email]
+      );
+      await client.query(`INSERT INTO auth(uid, password_hash) VALUES ($1, $2)`, [
+        userResult.rows[0].id,
+        passwordHash,
+      ]);
+      await client.query("COMMIT");
+      return userResult;
+    } catch (transactionError) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw transactionError;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+async function findUserByEmail(pool, email) {
+  try {
+    return await pool.query(`SELECT id, email, password_hash FROM users WHERE email = $1`, [email]);
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) {
+      throw error;
+    }
+
+    return pool.query(
+      `SELECT users.uid AS id, users.email, auth.password_hash
+         FROM users
+         JOIN auth ON auth.uid = users.uid
+        WHERE users.email = $1`,
+      [email]
+    );
+  }
+}
+
+async function findUserById(pool, userId) {
+  try {
+    return await pool.query("SELECT id, email FROM users WHERE id = $1", [userId]);
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) {
+      throw error;
+    }
+
+    return pool.query("SELECT uid AS id, email FROM users WHERE uid = $1", [userId]);
+  }
+}
+
 export async function ensureAuthLogTable(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_logs (
@@ -89,6 +224,40 @@ export async function ensureAuthLogTable(pool) {
   `);
 }
 
+export async function ensureSavedBuildTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS saved_builds (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL,
+      title TEXT NOT NULL,
+      total_price NUMERIC(10, 2),
+      budget NUMERIC(10, 2),
+      compatible BOOLEAN NOT NULL DEFAULT TRUE,
+      performance_score INTEGER,
+      parts JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_saved_builds_user_created
+      ON saved_builds(user_id, created_at DESC)
+  `);
+}
+
+function normalizeSavedBuildRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    totalPrice: row.total_price === null ? null : Number(row.total_price),
+    budget: row.budget === null ? null : Number(row.budget),
+    compatible: row.compatible,
+    performanceScore: row.performance_score,
+    parts: row.parts ?? {},
+    createdAt: row.created_at,
+  };
+}
+
 export function createAuthLogger(pool) {
   if (!pool) throw new Error("Pool is required");
 
@@ -102,32 +271,76 @@ export function createAuthLogger(pool) {
       ipAddress = null,
       userAgent = null,
     }) {
-      await pool.query(
-        `INSERT INTO auth_logs
-          (user_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          userId,
-          attemptedEmail,
-          eventType,
-          success,
-          failureReason,
-          ipAddress,
-          userAgent,
-        ]
-      );
+      try {
+        await pool.query(
+          `INSERT INTO auth_logs
+            (user_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            userId,
+            attemptedEmail,
+            eventType,
+            success,
+            failureReason,
+            ipAddress,
+            userAgent,
+          ]
+        );
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+
+        const authIdResult = userId
+          ? await pool.query(`SELECT auth_id FROM auth WHERE uid = $1`, [userId])
+          : { rows: [] };
+
+        await pool.query(
+          `INSERT INTO auth_logs
+            (auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            authIdResult.rows[0]?.auth_id ?? null,
+            userId,
+            attemptedEmail,
+            eventType,
+            success,
+            failureReason,
+            ipAddress,
+            userAgent,
+          ]
+        );
+      }
     },
 
     async getRecentEventsForUser({ userId, email, limit = 50 }) {
-      const { rows } = await pool.query(
-        `SELECT id, user_id, attempted_email, event_type, success, failure_reason, ip_address,
-                user_agent, created_at
-           FROM auth_logs
-          WHERE user_id = $1 OR attempted_email = $2
-          ORDER BY created_at DESC
-          LIMIT $3`,
-        [userId, email, limit]
-      );
+      let rows;
+
+      try {
+        ({ rows } = await pool.query(
+          `SELECT id, user_id, attempted_email, event_type, success, failure_reason, ip_address,
+                  user_agent, created_at
+             FROM auth_logs
+            WHERE user_id = $1 OR attempted_email = $2
+            ORDER BY created_at DESC
+            LIMIT $3`,
+          [userId, email, limit]
+        ));
+      } catch (error) {
+        if (!isSchemaMismatchError(error)) {
+          throw error;
+        }
+
+        ({ rows } = await pool.query(
+          `SELECT log_id AS id, uid AS user_id, attempted_email, event_type, success, failure_reason,
+                  ip_address, user_agent, created_at
+             FROM auth_logs
+            WHERE uid = $1 OR attempted_email = $2
+            ORDER BY created_at DESC
+            LIMIT $3`,
+          [userId, email, limit]
+        ));
+      }
 
       return rows;
     },
@@ -154,12 +367,7 @@ export function createSessionMiddleware(
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-      maxAge: 1000 * 60 * 60 * 8,
-    },
+    cookie: getSessionCookieConfig(),
   });
 }
 
@@ -179,8 +387,26 @@ export function createApp({
     sessionMiddleware ?? createSessionMiddleware(pool, sessionSecret, sessionStore);
   const resolvedAuthLogger =
     authLogger ?? (process.env.NODE_ENV === "test" ? createNoOpAuthLogger() : createAuthLogger(pool));
+  const safeLogAuthEvent = async (event) => {
+    try {
+      await resolvedAuthLogger.logEvent(event);
+    } catch (loggingError) {
+      console.error("Auth logging failed", loggingError);
+    }
+  };
 
   const app = express();
+  const trustProxy = parseBooleanEnv(
+    process.env.TRUST_PROXY,
+    process.env.NODE_ENV === "production"
+  );
+
+  if (trustProxy) {
+    app.set("trust proxy", 1);
+  }
+
+  applyCors(app);
+
   app.use(express.json());
   app.use("/api", priceTrackingRouter);
 
@@ -198,6 +424,90 @@ export function createApp({
 
   app.use(resolvedSessionMiddleware);
 
+  app.post("/builds", requireAuth, async (req, res) => {
+    const {
+      title,
+      totalPrice = null,
+      budget = null,
+      compatible = true,
+      performanceScore = null,
+      parts = {},
+    } = req.body ?? {};
+
+    if (!title || typeof title !== "string") {
+      return res.status(400).json({ ok: false, error: "title required" });
+    }
+
+    if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
+      return res.status(400).json({ ok: false, error: "parts must be an object" });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO saved_builds
+          (user_id, title, total_price, budget, compatible, performance_score, parts)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, title, total_price, budget, compatible, performance_score, parts, created_at`,
+        [
+          req.session.userId,
+          title,
+          totalPrice,
+          budget,
+          compatible,
+          performanceScore,
+          JSON.stringify(parts),
+        ]
+      );
+
+      return res.json({ ok: true, build: normalizeSavedBuildRow(rows[0]) });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ ok: false, error: "Server error" });
+    }
+  });
+
+  app.get("/builds/mine", requireAuth, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, title, total_price, budget, compatible, performance_score, parts, created_at
+           FROM saved_builds
+          WHERE user_id = $1
+          ORDER BY created_at DESC`,
+        [req.session.userId]
+      );
+
+      return res.json({ ok: true, builds: rows.map(normalizeSavedBuildRow) });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ ok: false, error: "Server error" });
+    }
+  });
+
+  app.delete("/builds/:buildId", requireAuth, async (req, res) => {
+    const buildId = Number(req.params.buildId);
+
+    if (!Number.isInteger(buildId) || buildId <= 0) {
+      return res.status(400).json({ ok: false, error: "Invalid build id" });
+    }
+
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM saved_builds
+          WHERE id = $1 AND user_id = $2`,
+        [buildId, req.session.userId]
+      );
+
+      if (rowCount === 0) {
+        return res.status(404).json({ ok: false, error: "Build not found" });
+      }
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ ok: false, error: "Server error" });
+    }
+  });
+
   app.post("/auth/register", async (req, res) => {
     const { email, password } = req.body ?? {};
 
@@ -214,14 +524,11 @@ export function createApp({
     const passwordHash = await resolvedBcrypt.hash(password, 12);
 
     try {
-      const result = await pool.query(
-        `INSERT INTO users(email, password_hash) VALUES ($1, $2) RETURNING id, email`,
-        [email.toLowerCase(), passwordHash]
-      );
+      const result = await createUserRecord(pool, email.toLowerCase(), passwordHash);
 
       req.session.userId = result.rows[0].id;
 
-      await resolvedAuthLogger.logEvent({
+      await safeLogAuthEvent({
         userId: result.rows[0].id,
         attemptedEmail: result.rows[0].email,
         eventType: "register",
@@ -235,7 +542,7 @@ export function createApp({
       const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
 
       if (e.code === "23505") {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           attemptedEmail: normalizedEmail,
           eventType: "register",
           success: false,
@@ -247,7 +554,7 @@ export function createApp({
         return res.status(409).json({ ok: false, error: "Email already exists" });
       }
 
-      await resolvedAuthLogger.logEvent({
+      await safeLogAuthEvent({
         attemptedEmail: normalizedEmail,
         eventType: "register",
         success: false,
@@ -267,7 +574,7 @@ export function createApp({
       const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
 
       if (!email || !password) {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           attemptedEmail: normalizedEmail,
           eventType: "login",
           success: false,
@@ -279,13 +586,10 @@ export function createApp({
         return res.status(400).json({ ok: false, error: "email/password required" });
       }
 
-      const { rows } = await pool.query(
-        `SELECT id, email, password_hash FROM users WHERE email = $1`,
-        [normalizedEmail]
-      );
+      const { rows } = await findUserByEmail(pool, normalizedEmail);
 
       if (rows.length === 0) {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           attemptedEmail: normalizedEmail,
           eventType: "login",
           success: false,
@@ -301,7 +605,7 @@ export function createApp({
       const ok = await resolvedBcrypt.compare(password, user.password_hash);
 
       if (!ok) {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           userId: user.id,
           attemptedEmail: user.email,
           eventType: "login",
@@ -316,7 +620,7 @@ export function createApp({
 
       req.session.userId = user.id;
 
-      await resolvedAuthLogger.logEvent({
+      await safeLogAuthEvent({
         userId: user.id,
         attemptedEmail: user.email,
         eventType: "login",
@@ -327,7 +631,7 @@ export function createApp({
 
       return res.json({ ok: true, user: { id: user.id, email: user.email } });
     } catch (e) {
-      await resolvedAuthLogger.logEvent({
+      await safeLogAuthEvent({
         attemptedEmail:
           typeof req.body?.email === "string" ? req.body.email.toLowerCase() : null,
         eventType: "login",
@@ -344,9 +648,7 @@ export function createApp({
 
   app.get("/auth/me", requireAuth, async (req, res) => {
     try {
-      const { rows } = await pool.query("SELECT id, email FROM users WHERE id = $1", [
-        req.session.userId,
-      ]);
+      const { rows } = await findUserById(pool, req.session.userId);
 
       return res.json({ ok: true, user: rows[0] });
     } catch (e) {
@@ -366,9 +668,7 @@ export function createApp({
 
   app.get("/auth/logs", requireAuth, async (req, res) => {
     try {
-      const { rows } = await pool.query("SELECT id, email FROM users WHERE id = $1", [
-        req.session.userId,
-      ]);
+      const { rows } = await findUserById(pool, req.session.userId);
 
       if (rows.length === 0) {
         return res.status(404).json({ ok: false, error: "User not found" });
@@ -411,6 +711,9 @@ export function startServer({
 } = {}) {
   ensureAuthLogTable(pool).catch((error) => {
     console.error("Failed to initialize auth_logs table", error);
+  });
+  ensureSavedBuildTable(pool).catch((error) => {
+    console.error("Failed to initialize saved_builds table", error);
   });
 
   const app = createApp({
