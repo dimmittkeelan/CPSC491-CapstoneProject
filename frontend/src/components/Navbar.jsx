@@ -1,8 +1,29 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import "../styles/Navbar.css";
 import icon from "../assets/icon-no-bg.png";
+import { getCurrentUser, logout } from "../services/authApi";
 
 export default function Navbar() {
+  const [user, setUser] = useState(undefined);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    getCurrentUser()
+      .then(setUser)
+      .catch(() => setUser(null));
+  }, []);
+
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch {
+      // session already gone is fine
+    }
+    setUser(null);
+    navigate("/");
+  }
+
   return (
     <nav className="navbar">
       <div className="nav-left">
@@ -14,7 +35,11 @@ export default function Navbar() {
         <Link to="/build" className="nav-link">Get Started</Link>
         <Link to="/saved" className="nav-link">Saved Builds</Link>
       </div>
-      <Link to="/signup" className="nav-button">Sign Up | Login</Link>
+      {user ? (
+        <button className="nav-button" onClick={handleLogout}>Logout</button>
+      ) : (
+        <Link to="/signup" className="nav-button">Sign Up | Login</Link>
+      )}
     </nav>
   );
 }
