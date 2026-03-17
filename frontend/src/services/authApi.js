@@ -29,6 +29,30 @@ async function postJson(path, payload) {
   return data;
 }
 
+async function patchJson(path, payload) {
+  const response = await fetch(resolveUrl(path), {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || "Request failed");
+  }
+
+  return data;
+}
+
 export async function getCurrentUser() {
   const response = await fetch(resolveUrl("/auth/me"), {
     method: "GET",
@@ -71,11 +95,11 @@ export async function logout() {
 }
 
 export async function updateEmail(currentPassword, newEmail) {
-  return postJson("/auth/account/email", { currentPassword, newEmail });
+  return patchJson("/auth/account/email", { currentPassword, newEmail });
 }
 
 export async function updatePassword(currentPassword, newPassword) {
-  return postJson("/auth/account/password", { currentPassword, newPassword });
+  return patchJson("/auth/account/password", { currentPassword, newPassword });
 }
 
 export async function deleteAccount(currentPassword) {
