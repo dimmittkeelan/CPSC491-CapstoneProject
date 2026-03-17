@@ -613,7 +613,7 @@ export function createApp({
       }
 
       const user = rows[0];
-      const ok = await resolvedBcrypt.compare(password, user.password_hash);
+      //const ok = await resolvedBcrypt.compare(password, user.password_hash);
 
       if (user.account_lock) {
         await resolvedAuthLogger.logEvent({
