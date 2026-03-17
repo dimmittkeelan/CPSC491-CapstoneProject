@@ -795,7 +795,7 @@ export function createApp({
     }
 
     try {
-      // Verify current password using the same approach as findUserByEmail
+      // Get user with password hash - need to query directly since findUserById doesn't return password_hash
       let result;
       try {
         result = await pool.query(
@@ -806,7 +806,7 @@ export function createApp({
         if (!isSchemaMismatchError(error)) {
           throw error;
         }
-
+        // Fallback for older schema
         result = await pool.query(
           `SELECT users.uid AS id, users.email, auth.password_hash
            FROM users
@@ -852,7 +852,7 @@ export function createApp({
         if (!isSchemaMismatchError(error)) {
           throw error;
         }
-
+        // Fallback for older schema
         await pool.query(
           `UPDATE auth SET password_hash = $1 WHERE uid = $2`,
           [newPasswordHash, req.session.userId]
