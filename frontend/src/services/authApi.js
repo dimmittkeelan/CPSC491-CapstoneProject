@@ -95,33 +95,13 @@ export async function logout() {
 }
 
 export async function updateEmail(currentPassword, newEmail) {
-  return patchJson("/auth/account/email", { currentPassword, newEmail });
+  throw new Error("updateEmail is not supported: the corresponding backend endpoint is not implemented.");
 }
 
 export async function updatePassword(currentPassword, newPassword) {
-  return patchJson("/auth/account/password", { currentPassword, newPassword });
+  throw new Error("updatePassword is not supported: the corresponding backend endpoint is not implemented.");
 }
 
 export async function deleteAccount(currentPassword) {
-  const response = await fetch(resolveUrl("/auth/account"), {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify({ currentPassword, confirmDelete: true }),
-  });
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || "Unable to delete account");
-  }
-
-  return data;
+  throw new Error("deleteAccount is not supported: the corresponding backend endpoint is not implemented.");
 }
