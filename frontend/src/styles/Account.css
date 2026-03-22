@@ -34,12 +34,12 @@
   margin-bottom: 24px;
 }
 
-.section-title {
+.account-page .section-title {
   font-size: 1.5rem;
   margin: 0 0 8px;
 }
 
-.section-description {
+.account-page .section-description {
   color: rgba(244, 245, 250, 0.72);
   margin: 0 0 24px;
   font-size: 0.95rem;
