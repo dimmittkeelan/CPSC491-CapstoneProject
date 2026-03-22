@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import "../styles/build.css";
+import { useBuild } from "../context/BuildContext";
 import { getCurrentUser } from "../services/authApi";
 import { createSavedBuild } from "../services/buildApi";
 import { saveBuildForUser } from "../services/savedBuilds";
@@ -68,7 +69,13 @@ function PartCard({ part }) {
 }
 
 export default function Build() {
-  const { totalPrice, budget, compatible, performanceScore, parts } = buildData;
+  const { selected, totalPrice, issues } = useBuild();
+  const POS = { cpu: "top", gpu: "left", ram: "right", mobo: "bottomLeft", psu: "bottomRight" };
+  const parts = Object.fromEntries(
+  Object.entries(POS).map(([cat, pos]) => [cat, selected[cat] ? { ...selected[cat], pos } : null])
+  );
+  const { budget } = buildData;
+  const compatible = issues.length === 0;
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -87,11 +94,10 @@ export default function Build() {
       }
 
       const buildPayload = {
-        title: `${parts.cpu.name} + ${parts.gpu.name}`,
+        title: `${parts.cpu?.name ?? "Custom"} + ${parts.gpu?.name ?? "Build"}`,
         totalPrice,
         budget,
         compatible,
-        performanceScore,
         parts,
       };
 
@@ -149,21 +155,14 @@ export default function Build() {
             src="https://via.placeholder.com/420x320?text=PC+Image"
             alt="PC Case"
           />
-
-          <div className="perfCard">
-            <div className="perfCard__ring">
-              <div className="perfCard__percent">{performanceScore}%</div>
-            </div>
-            <div className="perfCard__label">Optimal</div>
-            <div className="perfCard__sub">Performance</div>
-          </div>
         </div>
 
-        <PartCard part={parts.cpu} />
-        <PartCard part={parts.gpu} />
-        <PartCard part={parts.ram} />
-        <PartCard part={parts.mobo} />
-        <PartCard part={parts.psu} />
+        {parts.cpu  && <PartCard part={parts.cpu} />}
+        {parts.gpu  && <PartCard part={parts.gpu} />}
+        {parts.ram  && <PartCard part={parts.ram} />}
+        {parts.mobo && <PartCard part={parts.mobo} />}
+        {parts.psu  && <PartCard part={parts.psu} />}
+        
       </main>
     </div>
   );

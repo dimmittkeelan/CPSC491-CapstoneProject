@@ -14,7 +14,7 @@ export default function Home() {
           </p>
           
           <div className="cta-group">
-            <Link to="/build" className="btn-primary">Start Building</Link>
+            <Link to="/picker" className="btn-primary">Start Building</Link>
             <Link to="/saved" className="btn-secondary">View Saved Builds</Link>
           </div>
         </div>
