@@ -1,3 +1,5 @@
+import { sendPriceDropEmail } from "./notificationService.js";
+
 export const trackedParts = new Map();
 
 export function trackPart(partId, currentPrice) {
@@ -23,7 +25,7 @@ export function checkPriceDrop(oldPrice, newPrice) {
   };
 }
 
-export function observeNewPrice(partId, newPrice) {
+export async function observeNewPrice(partId, newPrice) {
   const part = trackedParts.get(partId);
 
   if (!part) {
@@ -31,6 +33,10 @@ export function observeNewPrice(partId, newPrice) {
   }
 
   const result = checkPriceDrop(part.lastPrice, newPrice);
+
+  if (result.priceDropped) {
+    await sendPriceDropEmail(partId, part.lastPrice, newPrice);
+  }
 
   trackedParts.set(partId, {
     lastPrice: newPrice,

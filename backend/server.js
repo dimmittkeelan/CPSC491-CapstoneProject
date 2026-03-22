@@ -6,6 +6,7 @@ import connectPgSimple from "connect-pg-simple";
 import dotenv from "dotenv";
 import { pathToFileURL } from "url";
 import { priceTrackingRouter } from "./routes/priceTracking.js";
+import fetch from "node-fetch";
 
 import {
   checkCpuMotherboardCompatibility,
@@ -263,21 +264,20 @@ export function createAuthLogger(pool) {
 
   return {
     async logEvent({
-      userId = null,
-      attemptedEmail = null,
-      eventType,
-      success,
-      failureReason = null,
-      ipAddress = null,
-      userAgent = null,
-    }) {
-      try {
-        await pool.query(
+                     authId = null,
+                     attemptedEmail = null,
+                     eventType,
+                     success,
+                     failureReason = null,
+                     ipAddress = null,
+                     userAgent = null,
+                   }) {
+      await pool.query(
           `INSERT INTO auth_logs
-            (user_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
+           (auth_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
-            userId,
+            authId,
             attemptedEmail,
             eventType,
             success,
@@ -285,62 +285,19 @@ export function createAuthLogger(pool) {
             ipAddress,
             userAgent,
           ]
-        );
-      } catch (error) {
-        if (!isSchemaMismatchError(error)) {
-          throw error;
-        }
-
-        const authIdResult = userId
-          ? await pool.query(`SELECT auth_id FROM auth WHERE uid = $1`, [userId])
-          : { rows: [] };
-
-        await pool.query(
-          `INSERT INTO auth_logs
-            (auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            authIdResult.rows[0]?.auth_id ?? null,
-            userId,
-            attemptedEmail,
-            eventType,
-            success,
-            failureReason,
-            ipAddress,
-            userAgent,
-          ]
-        );
-      }
+      );
     },
 
-    async getRecentEventsForUser({ userId, email, limit = 50 }) {
-      let rows;
-
-      try {
-        ({ rows } = await pool.query(
-          `SELECT id, user_id, attempted_email, event_type, success, failure_reason, ip_address,
+    async getRecentEventsForEmail({ email, limit = 50 }) {
+      const { rows } = await pool.query(
+          `SELECT log_id, auth_id, attempted_email, event_type, success, failure_reason, ip_address,
                   user_agent, created_at
-             FROM auth_logs
-            WHERE user_id = $1 OR attempted_email = $2
-            ORDER BY created_at DESC
-            LIMIT $3`,
-          [userId, email, limit]
-        ));
-      } catch (error) {
-        if (!isSchemaMismatchError(error)) {
-          throw error;
-        }
-
-        ({ rows } = await pool.query(
-          `SELECT log_id AS id, uid AS user_id, attempted_email, event_type, success, failure_reason,
-                  ip_address, user_agent, created_at
-             FROM auth_logs
-            WHERE uid = $1 OR attempted_email = $2
-            ORDER BY created_at DESC
-            LIMIT $3`,
-          [userId, email, limit]
-        ));
-      }
+           FROM auth_logs
+           WHERE attempted_email = $1
+           ORDER BY created_at DESC
+             LIMIT $2`,
+          [email, limit]
+      );
 
       return rows;
     },
@@ -367,7 +324,12 @@ export function createSessionMiddleware(
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    cookie: getSessionCookieConfig(),
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 1000 * 60 * 60 * 8,
+    },
   });
 }
 
@@ -420,6 +382,44 @@ export function createApp({
 
   app.post("/api/compatibility", (req, res) => {
     return res.json(buildCompatibilityResponse(req.body));
+  });
+
+  app.post("/api/build-analysis", (req, res) => {
+    const { cpu, motherboard, ram, gpu, psu } = req.body ?? {};
+
+    const compatibility = buildCompatibilityResponse(req.body);
+
+    const estimatedPower =
+      (typeof cpu?.tdp === "number" ? cpu.tdp : 0) +
+      (typeof gpu?.tdp === "number" ? gpu.tdp : 0) +
+      100;
+
+    return res.json({
+      ...compatibility,
+      estimatedPower,
+      parts: {
+        cpu,
+        motherboard,
+        ram,
+        gpu,
+        psu,
+      },
+    });
+  });
+
+  app.get("/api/external-products", async (req, res) => {
+    try {
+      const response = await fetch("https://dummyjson.com/products?limit=5");
+      const data = await response.json();
+
+      return res.json({
+        ok: true,
+        products: data.products,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ ok: false, error: "Failed to fetch external data" });
+    }
   });
 
   app.use(resolvedSessionMiddleware);
@@ -509,40 +509,71 @@ export function createApp({
   });
 
   app.post("/auth/register", async (req, res) => {
-    const { email, password } = req.body ?? {};
+    const { email, password, username } = req.body ?? {};
 
     if (!email || !password) {
       return res.status(400).json({ ok: false, error: "email/password required" });
     }
 
     if (password.length < 10) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Password needs to be at least length of 10." });
+      return res.status(400).json({
+        ok: false,
+        error: "Password needs to be at least length of 10.",
+      });
     }
 
-    const passwordHash = await resolvedBcrypt.hash(password, 12);
+    const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
+    const passwordHash = await bcryptLib.hash(password, 12);
+
+    const client = await pool.connect();
 
     try {
-      const result = await createUserRecord(pool, email.toLowerCase(), passwordHash);
+      await client.query("BEGIN");
 
-      req.session.userId = result.rows[0].id;
+      const userResult = await client.query(
+          `
+            INSERT INTO users (username, email)
+            VALUES ($1, $2)
+              RETURNING uid, username, email
+          `,
+          [username ?? null, normalizedEmail]
+      );
 
-      await safeLogAuthEvent({
-        userId: result.rows[0].id,
-        attemptedEmail: result.rows[0].email,
+      const user = userResult.rows[0];
+
+      const authResult = await client.query(
+          `
+      INSERT INTO auth (uid, password_hash)
+      VALUES ($1, $2)
+      RETURNING auth_id
+      `,
+          [user.uid, passwordHash]
+      );
+
+      const auth = authResult.rows[0];
+
+      await client.query("COMMIT");
+
+      req.session.userId = user.uid;
+
+      await resolvedAuthLogger.logEvent({
+        authId: auth.auth_id,
+        attemptedEmail: user.email,
         eventType: "register",
         success: true,
         ipAddress: getClientIp(req),
         userAgent: req.get("user-agent") ?? null,
       });
 
-      return res.json({ ok: true, user: result.rows[0] });
+      return res.json({
+        ok: true,
+        user,
+      });
     } catch (e) {
-      const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
+      await client.query("ROLLBACK");
 
       if (e.code === "23505") {
-        await safeLogAuthEvent({
+        await resolvedAuthLogger.logEvent({
           attemptedEmail: normalizedEmail,
           eventType: "register",
           success: false,
@@ -565,6 +596,8 @@ export function createApp({
 
       console.error(e);
       return res.status(500).json({ ok: false, error: "Server error" });
+    } finally {
+      client.release();
     }
   });
 
@@ -574,7 +607,7 @@ export function createApp({
       const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
 
       if (!email || !password) {
-        await safeLogAuthEvent({
+        await resolvedAuthLogger.logEvent({
           attemptedEmail: normalizedEmail,
           eventType: "login",
           success: false,
@@ -583,10 +616,27 @@ export function createApp({
           userAgent: req.get("user-agent") ?? null,
         });
 
-        return res.status(400).json({ ok: false, error: "email/password required" });
+        return res
+            .status(400)
+            .json({ ok: false, error: "email/password required" });
       }
 
-      const { rows } = await findUserByEmail(pool, normalizedEmail);
+      const { rows } = await pool.query(
+          `
+      SELECT
+        u.uid,
+        u.username,
+        u.email,
+        a.auth_id,
+        a.password_hash,
+        a.account_lock,
+        a.two_fa
+      FROM users u
+      JOIN auth a ON u.uid = a.uid
+      WHERE u.email = $1
+      `,
+          [normalizedEmail]
+      );
 
       if (rows.length === 0) {
         await safeLogAuthEvent({
@@ -602,11 +652,27 @@ export function createApp({
       }
 
       const user = rows[0];
-      const ok = await resolvedBcrypt.compare(password, user.password_hash);
+      //const ok = await resolvedBcrypt.compare(password, user.password_hash);
+
+      if (user.account_lock) {
+        await resolvedAuthLogger.logEvent({
+          authId: user.auth_id,
+          attemptedEmail: user.email,
+          eventType: "login",
+          success: false,
+          failureReason: "account_locked",
+          ipAddress: getClientIp(req),
+          userAgent: req.get("user-agent") ?? null,
+        });
+
+        return res.status(403).json({ ok: false, error: "Account locked" });
+      }
+
+      const ok = await bcryptLib.compare(password, user.password_hash);
 
       if (!ok) {
-        await safeLogAuthEvent({
-          userId: user.id,
+        await resolvedAuthLogger.logEvent({
+          authId: user.auth_id,
           attemptedEmail: user.email,
           eventType: "login",
           success: false,
@@ -618,10 +684,10 @@ export function createApp({
         return res.status(401).json({ ok: false, error: "Invalid credentials" });
       }
 
-      req.session.userId = user.id;
+      req.session.userId = user.uid;
 
-      await safeLogAuthEvent({
-        userId: user.id,
+      await resolvedAuthLogger.logEvent({
+        authId: user.auth_id,
         attemptedEmail: user.email,
         eventType: "login",
         success: true,
@@ -629,11 +695,18 @@ export function createApp({
         userAgent: req.get("user-agent") ?? null,
       });
 
-      return res.json({ ok: true, user: { id: user.id, email: user.email } });
+      return res.json({
+        ok: true,
+        user: {
+          uid: user.uid,
+          username: user.username,
+          email: user.email,
+        },
+      });
     } catch (e) {
       await safeLogAuthEvent({
         attemptedEmail:
-          typeof req.body?.email === "string" ? req.body.email.toLowerCase() : null,
+            typeof req.body?.email === "string" ? req.body.email.toLowerCase() : null,
         eventType: "login",
         success: false,
         failureReason: "server_error",
@@ -648,8 +721,10 @@ export function createApp({
 
   app.get("/auth/me", requireAuth, async (req, res) => {
     try {
-      const { rows } = await findUserById(pool, req.session.userId);
-
+      const { rows } = await pool.query(
+        "SELECT uid, email FROM users WHERE uid = $1",
+        [req.session.userId]
+      );
       return res.json({ ok: true, user: rows[0] });
     } catch (e) {
       console.error(e);
@@ -668,14 +743,16 @@ export function createApp({
 
   app.get("/auth/logs", requireAuth, async (req, res) => {
     try {
-      const { rows } = await findUserById(pool, req.session.userId);
+      const { rows } = await pool.query(
+          "SELECT uid, email FROM users WHERE uid = $1",
+          [req.session.userId]
+      );
 
       if (rows.length === 0) {
         return res.status(404).json({ ok: false, error: "User not found" });
       }
 
-      const logs = await resolvedAuthLogger.getRecentEventsForUser({
-        userId: rows[0].id,
+      const logs = await resolvedAuthLogger.getRecentEventsForEmail({
         email: rows[0].email,
       });
 
@@ -709,12 +786,7 @@ export function startServer({
   sessionSecret = process.env.SESSION_SECRET,
   sessionStore,
 } = {}) {
-  ensureAuthLogTable(pool).catch((error) => {
-    console.error("Failed to initialize auth_logs table", error);
-  });
-  ensureSavedBuildTable(pool).catch((error) => {
-    console.error("Failed to initialize saved_builds table", error);
-  });
+
 
   const app = createApp({
     pool,

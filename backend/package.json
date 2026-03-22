@@ -1,18 +1,18 @@
 {
   "type": "module",
-
   "scripts": {
-  "start": "node server.js",
-  "dev": "node --watch server.js",
-  "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js"
   },
-
   "dependencies": {
     "bcrypt": "^6.0.0",
     "connect-pg-simple": "^10.0.0",
     "dotenv": "^17.2.4",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^8.0.3",
     "pg": "^8.11.0"
   },
   "devDependencies": {

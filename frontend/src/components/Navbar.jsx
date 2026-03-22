@@ -33,7 +33,7 @@ export default function Navbar() {
       </div>
       <div className="nav-links">
         <Link to="/" className="nav-link">Home</Link>
-        <Link to="/build" className="nav-link">{user ? "New Build" : "Get Started"}</Link>
+        <Link to={user ? "/build" : "/picker"} className="nav-link">{user ? "New Build" : "Get Started"}</Link>
         <Link to="/saved" className="nav-link">Saved Builds</Link>
         {user && <Link to="/account" className="nav-link">Account</Link>}
       </div>

@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globa
 import { createApp } from "../server.js";
 
 function createPool(queryImpl = async () => ({ rows: [] })) {
+  const client = {
+    query: jest.fn(queryImpl),
+    release: jest.fn(),
+  };
+
   return {
     query: jest.fn(queryImpl),
+    connect: jest.fn(async () => client),
   };
 }
 
@@ -46,7 +52,7 @@ function createAuthLogger({
     logEvent: jest.fn(async (event) => {
       events.push(event);
     }),
-    getRecentEventsForUser: jest.fn(async () => events),
+    getRecentEventsForEmail: jest.fn(async () => events),
   };
 }
 
@@ -187,6 +193,7 @@ describe("server routes", () => {
     expect(body).toEqual({ ok: false, error: "email/password required" });
     expect(bcryptLib.hash).not.toHaveBeenCalled();
     expect(pool.query).not.toHaveBeenCalled();
+    expect(pool.connect).not.toHaveBeenCalled();
     expect(authLogger.logEvent).not.toHaveBeenCalled();
   });
 
@@ -207,9 +214,18 @@ describe("server routes", () => {
 
   test("POST /auth/register creates a user and lowercases email", async () => {
     const bcryptLib = createBcrypt({ hashResult: "hashed-value" });
-    const pool = createPool(async () => ({
-      rows: [{ id: 10, email: "user@example.com" }],
-    }));
+    const pool = createPool(
+      jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ uid: 10, username: null, email: "user@example.com" }],
+        }) // INSERT users
+        .mockResolvedValueOnce({
+          rows: [{ auth_id: 99 }],
+        }) // INSERT auth
+        .mockResolvedValueOnce({ rows: [] }) // COMMIT
+    );
     const authLogger = createAuthLogger();
     const baseUrl = await boot({ pool, bcryptLib, authLogger });
 
@@ -225,16 +241,13 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { id: 10, email: "user@example.com" },
+      user: { uid: 10, username: null, email: "user@example.com" },
     });
     expect(bcryptLib.hash).toHaveBeenCalledWith("long-password", 12);
-    expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("INSERT INTO users"),
-      ["user@example.com", "hashed-value"]
-    );
+    expect(pool.connect).toHaveBeenCalled();
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: 10,
+        authId: 99,
         attemptedEmail: "user@example.com",
         eventType: "register",
         success: true,
@@ -317,7 +330,17 @@ describe("server routes", () => {
 
   test("POST /auth/login rejects incorrect password", async () => {
     const pool = createPool(async () => ({
-      rows: [{ id: 7, email: "user@example.com", password_hash: "hash" }],
+      rows: [
+        {
+          uid: 7,
+          username: null,
+          email: "user@example.com",
+          auth_id: 55,
+          password_hash: "hash",
+          account_lock: false,
+          two_fa: false,
+        },
+      ],
     }));
     const bcryptLib = createBcrypt({ compareResult: false });
     const authLogger = createAuthLogger();
@@ -333,7 +356,7 @@ describe("server routes", () => {
     expect(bcryptLib.compare).toHaveBeenCalledWith("wrong-password", "hash");
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: 7,
+        authId: 55,
         attemptedEmail: "user@example.com",
         eventType: "login",
         success: false,
@@ -344,7 +367,17 @@ describe("server routes", () => {
 
   test("POST /auth/login returns user payload on success", async () => {
     const pool = createPool(async () => ({
-      rows: [{ id: 7, email: "user@example.com", password_hash: "hash" }],
+      rows: [
+        {
+          uid: 7,
+          username: null,
+          email: "user@example.com",
+          auth_id: 55,
+          password_hash: "hash",
+          account_lock: false,
+          two_fa: false,
+        },
+      ],
     }));
     const bcryptLib = createBcrypt({ compareResult: true });
     const authLogger = createAuthLogger();
@@ -362,15 +395,15 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { id: 7, email: "user@example.com" },
+      user: { uid: 7, username: null, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("SELECT id, email, password_hash"),
+      expect.stringContaining("FROM users u"),
       ["user@example.com"]
     );
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: 7,
+        authId: 55,
         attemptedEmail: "user@example.com",
         eventType: "login",
         success: true,
@@ -391,7 +424,7 @@ describe("server routes", () => {
 
   test("GET /auth/me returns the current user when authenticated", async () => {
     const pool = createPool(async () => ({
-      rows: [{ id: 42, email: "user@example.com" }],
+      rows: [{ uid: 42, email: "user@example.com" }],
     }));
     const baseUrl = await boot({ pool });
 
@@ -402,10 +435,10 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { id: 42, email: "user@example.com" },
+      user: { uid: 42, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
-      "SELECT id, email FROM users WHERE id = $1",
+      "SELECT uid, email FROM users WHERE uid = $1",
       [42]
     );
   });
@@ -545,8 +578,8 @@ describe("server routes", () => {
 
   test("GET /auth/logs returns current user's auth history", async () => {
     const pool = createPool(async (queryText) => {
-      if (queryText.includes("SELECT id, email FROM users")) {
-        return { rows: [{ id: 42, email: "user@example.com" }] };
+      if (queryText.includes("SELECT uid, email FROM users")) {
+        return { rows: [{ uid: 42, email: "user@example.com" }] };
       }
 
       return { rows: [] };
@@ -554,14 +587,14 @@ describe("server routes", () => {
     const authLogger = createAuthLogger({
       events: [
         {
-          id: 1,
+          log_id: 1,
           event_type: "login",
           success: true,
           attempted_email: "user@example.com",
           created_at: "2026-03-13T12:00:00.000Z",
         },
         {
-          id: 2,
+          log_id: 2,
           event_type: "login",
           success: false,
           attempted_email: "user@example.com",
@@ -581,14 +614,14 @@ describe("server routes", () => {
       ok: true,
       logs: [
         {
-          id: 1,
+          log_id: 1,
           event_type: "login",
           success: true,
           attempted_email: "user@example.com",
           created_at: "2026-03-13T12:00:00.000Z",
         },
         {
-          id: 2,
+          log_id: 2,
           event_type: "login",
           success: false,
           attempted_email: "user@example.com",
@@ -597,8 +630,7 @@ describe("server routes", () => {
         },
       ],
     });
-    expect(authLogger.getRecentEventsForUser).toHaveBeenCalledWith({
-      userId: 42,
+    expect(authLogger.getRecentEventsForEmail).toHaveBeenCalledWith({
       email: "user@example.com",
     });
   });

@@ -9,8 +9,12 @@ import {
 export const priceTrackingRouter = express.Router();
 
 priceTrackingRouter.post("/price-check", (req, res) => {
-  const { oldPrice, newPrice } = req.body;
-  res.json(checkPriceDrop(oldPrice, newPrice));
+  try {
+    const { oldPrice, newPrice } = req.body;
+    res.json(checkPriceDrop(oldPrice, newPrice));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 priceTrackingRouter.post("/track", (req, res) => {
@@ -18,11 +22,11 @@ priceTrackingRouter.post("/track", (req, res) => {
   res.json(trackPart(partId, currentPrice));
 });
 
-priceTrackingRouter.post("/observe", (req, res) => {
+priceTrackingRouter.post("/observe", async (req, res) => {
   const { partId, newPrice } = req.body;
 
   try {
-    const result = observeNewPrice(partId, newPrice);
+    const result = await observeNewPrice(partId, newPrice);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
