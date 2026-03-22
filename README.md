@@ -364,7 +364,7 @@ Every pull request also generates a **Vercel Preview Deployment**, allowing visu
 | Keelan Dimmitt | [@dimmittkeelan](https://github.com/dimmittkeelan) | Frontend UI, Responsive Design, DevOps |
 | Noah Scott | [@BareMetal-Alchemist](https://github.com/BareMetal-Alchemist) | Backend, Database, Server Infrastructure |
 | Ricky Maung | — | Frontend Boilerplate, Build Results Page, CI |
-| Eymard Alarcon | — | Testing Infrastructure, Price Observer Service |
+| Eymard Alarcon | [@Remote1234](https://github.com/Remote1234) | Testing Infrastructure, Price Observer Service |
 | Yuuji Kobayashi | [@Yuuji-95](https://github.com/Yuuji-95) | Compatibility Engine, Backend API |
 
 ---
