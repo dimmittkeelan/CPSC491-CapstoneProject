@@ -6,6 +6,7 @@ import connectPgSimple from "connect-pg-simple";
 import dotenv from "dotenv";
 import { pathToFileURL } from "url";
 import { priceTrackingRouter } from "./routes/priceTracking.js";
+import fetch from "node-fetch";
 
 import {
   checkCpuMotherboardCompatibility,
@@ -384,27 +385,42 @@ export function createApp({
   });
 
   app.post("/api/build-analysis", (req, res) => {
-  const { cpu, motherboard, ram, gpu, psu } = req.body ?? {};
+    const { cpu, motherboard, ram, gpu, psu } = req.body ?? {};
 
-  const compatibility = buildCompatibilityResponse(req.body);
+    const compatibility = buildCompatibilityResponse(req.body);
 
-  const estimatedPower =
-    (typeof cpu?.tdp === "number" ? cpu.tdp : 0) +
-    (typeof gpu?.tdp === "number" ? gpu.tdp : 0) +
-    100;
+    const estimatedPower =
+      (typeof cpu?.tdp === "number" ? cpu.tdp : 0) +
+      (typeof gpu?.tdp === "number" ? gpu.tdp : 0) +
+      100;
 
-  return res.json({
-    ...compatibility,
-    estimatedPower,
-    parts: {
-      cpu,
-      motherboard,
-      ram,
-      gpu,
-      psu,
-    },
+    return res.json({
+      ...compatibility,
+      estimatedPower,
+      parts: {
+        cpu,
+        motherboard,
+        ram,
+        gpu,
+        psu,
+      },
+    });
   });
-});
+
+  app.get("/api/external-products", async (req, res) => {
+    try {
+      const response = await fetch("https://dummyjson.com/products?limit=5");
+      const data = await response.json();
+
+      return res.json({
+        ok: true,
+        products: data.products,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ ok: false, error: "Failed to fetch external data" });
+    }
+  });
 
   app.use(resolvedSessionMiddleware);
 
