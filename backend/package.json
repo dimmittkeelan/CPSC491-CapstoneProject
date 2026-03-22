@@ -11,6 +11,7 @@
     "dotenv": "^17.2.4",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "node-fetch": "^3.3.2",
     "nodemailer": "^8.0.3",
     "pg": "^8.11.0"
   },
