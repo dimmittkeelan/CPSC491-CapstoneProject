@@ -7,7 +7,10 @@
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background-color: #000; /* Matches the black background used in other pages */
+  background:
+    radial-gradient(900px 500px at 20% 10%, rgba(138, 43, 226, 0.2), transparent 60%),
+    radial-gradient(700px 400px at 80% 20%, rgba(78, 200, 255, 0.16), transparent 60%),
+    #09090d;
 }
 
 .login-form {
@@ -25,6 +28,16 @@
   margin-bottom: 1.5rem;
   font-size: 1.5rem;
   text-align: center;
+}
+
+.form-error {
+  color: #ff8f8f;
+  background: rgba(255, 99, 99, 0.12);
+  border: 1px solid rgba(255, 99, 99, 0.35);
+  border-radius: 4px;
+  padding: 0.65rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.92rem;
 }
 
 .login-form label {
@@ -59,4 +72,25 @@
 
 .login-form button:hover {
   background-color: #9d4ced;
+}
+
+.login-form button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.signup-redirect {
+  text-align: center;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+.signup-redirect a {
+  color: #8A2BE2;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+.signup-redirect a:hover {
+  text-decoration: underline;
 }
