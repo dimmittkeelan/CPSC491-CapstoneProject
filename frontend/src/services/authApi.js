@@ -29,6 +29,30 @@ async function postJson(path, payload) {
   return data;
 }
 
+async function patchJson(path, payload) {
+  const response = await fetch(resolveUrl(path), {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || "Request failed");
+  }
+
+  return data;
+}
+
 export async function getCurrentUser() {
   const response = await fetch(resolveUrl("/auth/me"), {
     method: "GET",
@@ -68,4 +92,16 @@ export async function logout() {
     credentials: "include",
   });
   if (!response.ok) throw new Error("Logout failed");
+}
+
+export async function updateEmail(currentPassword, newEmail) {
+  throw new Error("updateEmail is not supported: the corresponding backend endpoint is not implemented.");
+}
+
+export async function updatePassword(currentPassword, newPassword) {
+  throw new Error("updatePassword is not supported: the corresponding backend endpoint is not implemented.");
+}
+
+export async function deleteAccount(currentPassword) {
+  throw new Error("deleteAccount is not supported: the corresponding backend endpoint is not implemented.");
 }
