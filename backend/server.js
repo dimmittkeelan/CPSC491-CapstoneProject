@@ -570,7 +570,9 @@ export function createApp({
         user,
       });
     } catch (e) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {}
 
       if (e.code === "23505") {
         await resolvedAuthLogger.logEvent({
