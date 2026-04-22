@@ -23,10 +23,10 @@ test("detect no price drop", () => {
   expect(result.difference).toBe(0);
 });
 
-test("track part then observe drop", () => {
+test("track part then observe drop", async () => {
   trackPart("gpu1", 500);
 
-  const result = observeNewPrice("gpu1", 450);
+  const result = await observeNewPrice("gpu1", 450);
 
   expect(result.priceDropped).toBe(true);
 });
