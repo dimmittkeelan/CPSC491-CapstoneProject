@@ -8,28 +8,31 @@ import SignUp from "./pages/SignUp";
 import Account from "./pages/Account";
 import PartPicker from "./pages/PartPicker";
 import Navbar from "./components/Navbar";
+import UxErrorBoundary from "./components/UxErrorBoundary";
 import "./App.css";
 
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="app">
-        <Navbar />
-        <main className="main">
-        <BuildProvider>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/picker" element={<PartPicker />} />
-            <Route path="/build" element={<Build />} />
-            <Route path="/saved" element={<SavedBuild />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<SignUp />} />
-            <Route path="/account" element={<Account />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BuildProvider>
-        </main>
-      </div>
+      <UxErrorBoundary>
+        <div className="app">
+          <Navbar />
+          <main className="main">
+            <BuildProvider>
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/picker" element={<PartPicker />} />
+                <Route path="/build" element={<Build />} />
+                <Route path="/saved" element={<SavedBuild />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/signup" element={<SignUp />} />
+                <Route path="/account" element={<Account />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </BuildProvider>
+          </main>
+        </div>
+      </UxErrorBoundary>
     </BrowserRouter>
   );
 }
