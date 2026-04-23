@@ -1,0 +1,28 @@
+.spinner-container {
+  min-height: 40vh;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  text-align: center;
+  color: #334155;
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 4px solid #e2e8f0;
+  border-top-color: #0f766e;
+  animation: spinner-rotate 0.9s linear infinite;
+}
+
+.spinner-container p {
+  margin: 0;
+  font-weight: 600;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
