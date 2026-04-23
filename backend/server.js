@@ -65,12 +65,12 @@ function applyCors(app, allowedOrigins = parseAllowedOrigins()) {
 function getSessionCookieConfig() {
   const isProduction = process.env.NODE_ENV === "production";
   const configuredSameSite = process.env.SESSION_COOKIE_SAMESITE?.trim().toLowerCase();
-  const validSameSite = new Set(["lax", "strict", "none"]);
+  const validSameSite = new Set(["none"]);
   const sameSite = validSameSite.has(configuredSameSite)
     ? configuredSameSite
     : isProduction
       ? "none"
-      : "lax";
+      : "none";
 
   let secure = parseBooleanEnv(process.env.SESSION_COOKIE_SECURE, isProduction);
   if (sameSite === "none") {
