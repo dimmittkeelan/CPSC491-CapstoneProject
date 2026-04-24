@@ -68,4 +68,12 @@ import {
     test("TC-09: checkPriceDrop validates numeric inputs", () => {
       expect(() => checkPriceDrop("500", 400)).toThrow("Prices must be numbers");
     });
+
+    test("TC-10: extremely large price drop is handled correctly", async () => {
+      trackPart("gpu10", 1000000);
+      const result = await observeNewPrice("gpu10", 1);
+
+      expect(result.priceDropped).toBe(true);
+      expect(result.difference).toBe(999999);
+    });
   });
