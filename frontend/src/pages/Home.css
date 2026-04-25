@@ -1,6 +1,6 @@
 /* src/pages/Home.css */
 
-/* 1. Main Wrapper: Allows scrolling now */
+/* 1. Main Wrapper */
 .home-wrapper {
   width: 100%;
   background-color: #000;
@@ -23,7 +23,7 @@
   text-align: center;
   max-width: 800px;
   padding: 2rem;
-  background: rgba(0, 0, 0, 0.3); 
+  background: rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(4px);
   border-radius: 15px;
 }
@@ -60,12 +60,19 @@
   font-weight: 600;
   text-decoration: none;
   border: none;
+  cursor: pointer;
   transition: transform 0.2s, background 0.2s;
 }
 
 .btn-primary:hover {
   background-color: #9d4ced;
   transform: scale(1.05);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .btn-secondary {
@@ -90,10 +97,11 @@
   outline: none;
   box-shadow: 0 0 0 3px rgba(157, 76, 237, 0.7);
 }
+
 /* --- HOW IT WORKS SECTION --- */
 .how-it-works-section {
   padding: 80px 20px;
-  background-color: #0a0a0a; /* Slightly lighter black for contrast */
+  background-color: #0a0a0a;
   text-align: center;
 }
 
@@ -108,17 +116,15 @@
   font-size: 1.1rem;
 }
 
-/* The Grid Layout for the 3 Cards */
 .steps-grid {
   display: flex;
   justify-content: center;
   gap: 30px;
-  flex-wrap: wrap; /* Wraps cards on mobile */
+  flex-wrap: wrap;
   max-width: 1200px;
   margin: 0 auto;
 }
 
-/* Individual Card Styling */
 .step-card {
   background-color: #111;
   border: 1px solid #333;
@@ -132,11 +138,10 @@
 }
 
 .step-card:hover {
-  transform: translateY(-5px); /* Subtle lift effect */
+  transform: translateY(-5px);
   border-color: #8A2BE2;
 }
 
-/* The Purple Circle Number */
 .step-circle {
   width: 60px;
   height: 60px;
@@ -160,4 +165,69 @@
   color: #aaa;
   line-height: 1.5;
   font-size: 0.95rem;
+}
+
+/* --- BUDGET FORM --- */
+.budget-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.budget-input-row {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(138, 43, 226, 0.5);
+  border-radius: 10px;
+  padding: 0 16px;
+  width: 100%;
+  max-width: 380px;
+  transition: border-color 0.2s;
+}
+
+.budget-input-row:focus-within {
+  border-color: #8A2BE2;
+  box-shadow: 0 0 0 3px rgba(138, 43, 226, 0.25);
+}
+
+.budget-dollar {
+  color: #8A2BE2;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-right: 6px;
+  user-select: none;
+}
+
+.budget-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: white;
+  font-size: 1.2rem;
+  padding: 14px 0;
+  width: 100%;
+}
+
+.budget-input::placeholder {
+  color: #666;
+}
+
+/* Remove number input arrows */
+.budget-input::-webkit-outer-spin-button,
+.budget-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.budget-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+.budget-error {
+  color: #ff6b6b;
+  font-size: 0.9rem;
+  margin: -8px 0 0;
 }

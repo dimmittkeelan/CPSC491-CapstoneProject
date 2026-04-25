@@ -5,50 +5,7 @@ import { useBuild } from "../context/BuildContext";
 import { getCurrentUser } from "../services/authApi";
 import { createSavedBuild } from "../services/buildApi";
 import { saveBuildForUser } from "../services/savedBuilds";
-
-const buildData = {
-  totalPrice: 897,
-  budget: 1000,
-  compatible: true,
-  performanceScore: 74,
-  parts: {
-    cpu: {
-      name: "Ryzen 5 5600X",
-      price: 199,
-      alt: "Intel i5-11400F",
-      img: "https://via.placeholder.com/56",
-      pos: "top",
-    },
-    gpu: {
-      name: "RTX 3060",
-      price: 329,
-      alt: "AMD RX 6600",
-      img: "https://via.placeholder.com/56",
-      pos: "left",
-    },
-    ram: {
-      name: "16GB DDR4 3200MHz",
-      price: 79,
-      alt: "Corsair Vengeance 16GB",
-      img: "https://via.placeholder.com/56",
-      pos: "right",
-    },
-    mobo: {
-      name: "ROG STRIX B550-F",
-      price: 180,
-      alt: "MSI B550-A Pro",
-      img: "https://via.placeholder.com/56",
-      pos: "bottomLeft",
-    },
-    psu: {
-      name: "Focus GX-650",
-      price: 110,
-      alt: "Corsair CX650M",
-      img: "https://via.placeholder.com/56",
-      pos: "bottomRight",
-    },
-  },
-};
+import pcImage from "../assets/pc-image.png";
 
 function PartCard({ part }) {
   return (
@@ -56,7 +13,6 @@ function PartCard({ part }) {
       <div className="partCard__imgWrap">
         <img className="partCard__img" src={part.img} alt={part.name} />
       </div>
-
       <div className="partCard__text">
         <div className="partCard__titleRow">
           <div className="partCard__title">{part.name}</div>
@@ -69,12 +25,11 @@ function PartCard({ part }) {
 }
 
 export default function Build() {
-  const { selected, totalPrice, issues } = useBuild();
+  const { selected, totalPrice, budget, issues } = useBuild();
   const POS = { cpu: "top", gpu: "left", ram: "right", mobo: "bottomLeft", psu: "bottomRight" };
   const parts = Object.fromEntries(
-  Object.entries(POS).map(([cat, pos]) => [cat, selected[cat] ? { ...selected[cat], pos } : null])
+    Object.entries(POS).map(([cat, pos]) => [cat, selected[cat] ? { ...selected[cat], pos } : null])
   );
-  const { budget } = buildData;
   const compatible = issues.length === 0;
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -117,18 +72,16 @@ export default function Build() {
 
   return (
     <div className="buildPage">
-
       <header className="buildHeader">
-        <h1 className="buildHeader__title">
-          Build Successfully Created
-        </h1>
+        <h1 className="buildHeader__title">Build Successfully Created</h1>
         <p className="buildHeader__subtitle">
-          Here’s your optimized setup based on your budget. Click any part to explore or purchase.
+          Here's your optimized setup based on your budget. Click any part to explore or purchase.
         </p>
 
         <div className="budgetPill">
           <div className="budgetPill__text">
-            Total Price: <span>${totalPrice}</span> / Budget: <span>${budget}</span>
+            Total Price: <span>${totalPrice}</span>
+            {budget > 0 && <> / Budget: <span>${budget}</span></>}
           </div>
           {compatible && <div className="budgetPill__badge">✓ Compatible</div>}
         </div>
@@ -147,13 +100,13 @@ export default function Build() {
       </header>
 
       <main className="buildCanvas">
-
         <div className="centerRig">
           <div className="rigGlow" />
           <img
             className="rigImage"
-            src="https://via.placeholder.com/420x320?text=PC+Image"
+            src={pcImage}
             alt="PC Case"
+            onError={(e) => { e.target.style.display = "none"; }}
           />
         </div>
 
@@ -162,7 +115,6 @@ export default function Build() {
         {parts.ram  && <PartCard part={parts.ram} />}
         {parts.mobo && <PartCard part={parts.mobo} />}
         {parts.psu  && <PartCard part={parts.psu} />}
-        
       </main>
     </div>
   );
