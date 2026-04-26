@@ -52,7 +52,7 @@ function createAuthLogger({
     logEvent: jest.fn(async (event) => {
       events.push(event);
     }),
-    getRecentEventsForEmail: jest.fn(async () => events),
+    getRecentEventsForUser: jest.fn(async () => events),
   };
 }
 
@@ -247,7 +247,7 @@ describe("server routes", () => {
     expect(pool.connect).toHaveBeenCalled();
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        authId: 99,
+        userId: 10,
         attemptedEmail: "user@example.com",
         eventType: "register",
         success: true,
@@ -360,7 +360,7 @@ describe("server routes", () => {
     expect(bcryptLib.compare).toHaveBeenCalledWith("wrong-password", "hash");
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        authId: 55,
+        userId: 7,
         attemptedEmail: "user@example.com",
         eventType: "login",
         success: false,
@@ -407,7 +407,7 @@ describe("server routes", () => {
     );
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        authId: 55,
+        userId: 7,
         attemptedEmail: "user@example.com",
         eventType: "login",
         success: true,
@@ -634,8 +634,8 @@ describe("server routes", () => {
         },
       ],
     });
-    expect(authLogger.getRecentEventsForEmail).toHaveBeenCalledWith({
-      email: "user@example.com",
+    expect(authLogger.getRecentEventsForUser).toHaveBeenCalledWith({
+      userId: 42,
     });
   });
 

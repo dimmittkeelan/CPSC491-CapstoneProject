@@ -215,7 +215,7 @@ export async function ensureAuthLogTable(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_logs (
       id BIGSERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      user_id INTEGER REFERENCES users(uid) ON DELETE SET NULL,
       attempted_email TEXT,
       event_type TEXT NOT NULL,
       success BOOLEAN NOT NULL,
@@ -231,7 +231,7 @@ export async function ensureSavedBuildTable(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS saved_builds (
       id BIGSERIAL PRIMARY KEY,
-      user_id BIGINT NOT NULL,
+      user_id INTEGER NOT NULL,
       title TEXT NOT NULL,
       total_price NUMERIC(10, 2),
       budget NUMERIC(10, 2),
@@ -266,7 +266,7 @@ export function createAuthLogger(pool) {
 
   return {
     async logEvent({
-                     authId = null,
+                     userId = null,
                      attemptedEmail = null,
                      eventType,
                      success,
@@ -276,10 +276,10 @@ export function createAuthLogger(pool) {
                    }) {
       await pool.query(
           `INSERT INTO auth_logs
-           (auth_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
+           (user_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
-            authId,
+            userId,
             attemptedEmail,
             eventType,
             success,
@@ -290,15 +290,15 @@ export function createAuthLogger(pool) {
       );
     },
 
-    async getRecentEventsForEmail({ email, limit = 50 }) {
+    async getRecentEventsForUser({ userId, limit = 50 }) {
       const { rows } = await pool.query(
-          `SELECT log_id, auth_id, attempted_email, event_type, success, failure_reason, ip_address,
+          `SELECT id AS log_id, user_id, attempted_email, event_type, success, failure_reason, ip_address,
                   user_agent, created_at
            FROM auth_logs
-           WHERE attempted_email = $1
+           WHERE user_id = $1
            ORDER BY created_at DESC
              LIMIT $2`,
-          [email, limit]
+          [userId, limit]
       );
 
       return rows;
@@ -560,7 +560,7 @@ export function createApp({
       req.session.userId = user.uid;
 
       await resolvedAuthLogger.logEvent({
-        authId: auth.auth_id,
+        userId: user.uid,
         attemptedEmail: user.email,
         eventType: "register",
         success: true,
@@ -662,7 +662,7 @@ export function createApp({
 
       if (user.account_lock) {
         await resolvedAuthLogger.logEvent({
-          authId: user.auth_id,
+          userId: user.uid,
           attemptedEmail: user.email,
           eventType: "login",
           success: false,
@@ -678,7 +678,7 @@ export function createApp({
 
       if (!ok) {
         await resolvedAuthLogger.logEvent({
-          authId: user.auth_id,
+          userId: user.uid,
           attemptedEmail: user.email,
           eventType: "login",
           success: false,
@@ -693,7 +693,7 @@ export function createApp({
       req.session.userId = user.uid;
 
       await resolvedAuthLogger.logEvent({
-        authId: user.auth_id,
+        userId: user.uid,
         attemptedEmail: user.email,
         eventType: "login",
         success: true,
@@ -763,8 +763,8 @@ export function createApp({
         return res.status(404).json({ ok: false, error: "User not found" });
       }
 
-      const logs = await resolvedAuthLogger.getRecentEventsForEmail({
-        email: rows[0].email,
+      const logs = await resolvedAuthLogger.getRecentEventsForUser({
+        userId: req.session.userId,
       });
 
       return res.json({ ok: true, logs });
