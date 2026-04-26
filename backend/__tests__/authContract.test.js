@@ -4,63 +4,98 @@ import { createApp } from "../server.js";
 
 function createInMemoryUserPool() {
   const usersByEmail = new Map();
+  const usersById = new Map();
+  const authByUid = new Map();
   let nextId = 1;
+  let nextAuthId = 1;
+
+  const handleQuery = async (text, params = []) => {
+    if (text.startsWith("BEGIN") || text.startsWith("COMMIT") || text.startsWith("ROLLBACK")) {
+      return { rows: [] };
+    }
+
+    if (text.includes("INSERT INTO users")) {
+      const [username, email] = params;
+      if (usersByEmail.has(email)) {
+        const err = new Error("duplicate key value violates unique constraint");
+        err.code = "23505";
+        throw err;
+      }
+
+      const user = { uid: nextId++, username: username ?? null, email };
+      usersByEmail.set(email, user);
+      usersById.set(user.uid, user);
+      return { rows: [{ uid: user.uid, username: user.username, email: user.email }] };
+    }
+
+    if (text.includes("INSERT INTO auth")) {
+      const [uid, passwordHash] = params;
+      authByUid.set(uid, {
+        auth_id: nextAuthId++,
+        password_hash: passwordHash,
+        account_lock: false,
+        two_fa: false,
+      });
+      return { rows: [{ auth_id: authByUid.get(uid).auth_id }] };
+    }
+
+    if (text.includes("FROM users u") && text.includes("JOIN auth a") && text.includes("WHERE u.email = $1")) {
+      const [email] = params;
+      const user = usersByEmail.get(email);
+      if (!user) return { rows: [] };
+
+      const auth = authByUid.get(user.uid);
+      if (!auth) return { rows: [] };
+
+      return {
+        rows: [
+          {
+            uid: user.uid,
+            username: user.username,
+            email: user.email,
+            auth_id: auth.auth_id,
+            password_hash: auth.password_hash,
+            account_lock: auth.account_lock,
+            two_fa: auth.two_fa,
+          },
+        ],
+      };
+    }
+
+    if (text.startsWith("SELECT uid, email FROM users WHERE uid = $1")) {
+      const [uid] = params;
+      const user = usersById.get(uid);
+      if (!user) return { rows: [] };
+      return { rows: [{ uid: user.uid, email: user.email }] };
+    }
+
+    if (text.startsWith("SELECT 1 as ok")) {
+      return { rows: [{ ok: 1 }] };
+    }
+
+    throw new Error(`Unexpected query in test pool: ${text}`);
+  };
 
   return {
     async query(text, params = []) {
-      if (text.startsWith("INSERT INTO users")) {
-        const [email, passwordHash] = params;
-        if (usersByEmail.has(email)) {
-          const err = new Error("duplicate key value violates unique constraint");
-          err.code = "23505";
-          throw err;
-        }
-
-        const user = { id: nextId++, email, password_hash: passwordHash };
-        usersByEmail.set(email, user);
-        return { rows: [{ id: user.id, email: user.email }] };
-      }
-
-      if (text.startsWith("SELECT id, email, password_hash FROM users WHERE email = $1")) {
-        const [email] = params;
-        const user = usersByEmail.get(email);
-        if (!user) return { rows: [] };
-        return {
-          rows: [{ id: user.id, email: user.email, password_hash: user.password_hash }],
-        };
-      }
-
-      if (text.startsWith("SELECT id, email FROM users WHERE id = $1")) {
-        const [id] = params;
-        const user = Array.from(usersByEmail.values()).find((u) => u.id === id);
-        if (!user) return { rows: [] };
-        return { rows: [{ id: user.id, email: user.email }] };
-      }
-
-      if (text.startsWith("SELECT 1 as ok")) {
-        return { rows: [{ ok: 1 }] };
-      }
-
-      throw new Error(`Unexpected query in test pool: ${text}`);
+      return handleQuery(text, params);
+    },
+    async connect() {
+      return {
+        async query(text, params = []) {
+          return handleQuery(text, params);
+        },
+        release() {},
+      };
     },
   };
 }
-
-const fakeBcrypt = {
-  async hash(password) {
-    return `hash:${password}`;
-  },
-  async compare(password, hash) {
-    return hash === `hash:${password}`;
-  },
-};
 
 function createTestAgent() {
   const app = createApp({
     pool: createInMemoryUserPool(),
     sessionSecret: "test-secret",
     sessionStore: new session.MemoryStore(),
-    bcryptImpl: fakeBcrypt,
   });
 
   return request.agent(app);

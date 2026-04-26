@@ -18,6 +18,8 @@ import {
 // Keep dotenv quiet during tests to reduce noise in test output.
 dotenv.config({ quiet: process.env.NODE_ENV === "test" });
 
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "connect.sid";
+
 function parseBooleanEnv(value, defaultValue = false) {
   if (value === undefined || value === null || value === "") {
     return defaultValue;
@@ -320,6 +322,7 @@ export function createSessionMiddleware(
     });
 
   return session({
+    name: SESSION_COOKIE_NAME,
     store,
     secret: sessionSecret,
     resave: false,
@@ -567,7 +570,10 @@ export function createApp({
 
       return res.json({
         ok: true,
-        user,
+        user: {
+          id: user.uid,
+          email: user.email,
+        },
       });
     } catch (e) {
       await client.query("ROLLBACK");
@@ -698,8 +704,7 @@ export function createApp({
       return res.json({
         ok: true,
         user: {
-          uid: user.uid,
-          username: user.username,
+          id: user.uid,
           email: user.email,
         },
       });
@@ -725,7 +730,13 @@ export function createApp({
         "SELECT uid, email FROM users WHERE uid = $1",
         [req.session.userId]
       );
-      return res.json({ ok: true, user: rows[0] });
+      return res.json({
+        ok: true,
+        user: {
+          id: rows[0].uid,
+          email: rows[0].email,
+        },
+      });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: "Server error" });
@@ -736,7 +747,7 @@ export function createApp({
     req.session.destroy((err) => {
       if (err) return res.status(500).json({ ok: false, error: "Logout failed" });
 
-      res.clearCookie("connect.sid");
+      res.clearCookie(SESSION_COOKIE_NAME);
       return res.json({ ok: true });
     });
   });

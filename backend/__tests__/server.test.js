@@ -241,7 +241,7 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { uid: 10, username: null, email: "user@example.com" },
+      user: { id: 10, email: "user@example.com" },
     });
     expect(bcryptLib.hash).toHaveBeenCalledWith("long-password", 12);
     expect(pool.connect).toHaveBeenCalled();
@@ -258,10 +258,14 @@ describe("server routes", () => {
   });
 
   test("POST /auth/register returns 409 on duplicate email", async () => {
-    const pool = createPool(async () => {
-      const error = new Error("duplicate");
-      error.code = "23505";
-      throw error;
+    const pool = createPool(async (queryText) => {
+      if (queryText.includes("INSERT INTO users")) {
+        const error = new Error("duplicate");
+        error.code = "23505";
+        throw error;
+      }
+
+      return { rows: [] };
     });
     const authLogger = createAuthLogger();
     const baseUrl = await boot({ pool, authLogger });
@@ -395,7 +399,7 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { uid: 7, username: null, email: "user@example.com" },
+      user: { id: 7, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
       expect.stringContaining("FROM users u"),
@@ -435,7 +439,7 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { uid: 42, email: "user@example.com" },
+      user: { id: 42, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
       "SELECT uid, email FROM users WHERE uid = $1",
