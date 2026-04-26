@@ -219,7 +219,7 @@ describe("server routes", () => {
         .fn()
         .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({
-          rows: [{ uid: 10, username: null, email: "user@example.com" }],
+          rows: [{ id: 10, email: "user@example.com" }],
         }) // INSERT users
         .mockResolvedValueOnce({
           rows: [{ auth_id: 99 }],
@@ -241,13 +241,14 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { uid: 10, username: null, email: "user@example.com" },
+      user: { id: 10, email: "user@example.com" },
     });
     expect(bcryptLib.hash).toHaveBeenCalledWith("long-password", 12);
     expect(pool.connect).toHaveBeenCalled();
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         authId: 99,
+        userId: 10,
         attemptedEmail: "user@example.com",
         eventType: "register",
         success: true,
@@ -332,8 +333,7 @@ describe("server routes", () => {
     const pool = createPool(async () => ({
       rows: [
         {
-          uid: 7,
-          username: null,
+          id: 7,
           email: "user@example.com",
           auth_id: 55,
           password_hash: "hash",
@@ -357,6 +357,7 @@ describe("server routes", () => {
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         authId: 55,
+        userId: 7,
         attemptedEmail: "user@example.com",
         eventType: "login",
         success: false,
@@ -369,8 +370,7 @@ describe("server routes", () => {
     const pool = createPool(async () => ({
       rows: [
         {
-          uid: 7,
-          username: null,
+          id: 7,
           email: "user@example.com",
           auth_id: 55,
           password_hash: "hash",
@@ -395,7 +395,7 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { uid: 7, username: null, email: "user@example.com" },
+      user: { id: 7, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
       expect.stringContaining("FROM users u"),
@@ -404,6 +404,7 @@ describe("server routes", () => {
     expect(authLogger.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         authId: 55,
+        userId: 7,
         attemptedEmail: "user@example.com",
         eventType: "login",
         success: true,
@@ -424,7 +425,7 @@ describe("server routes", () => {
 
   test("GET /auth/me returns the current user when authenticated", async () => {
     const pool = createPool(async () => ({
-      rows: [{ uid: 42, email: "user@example.com" }],
+      rows: [{ id: 42, email: "user@example.com" }],
     }));
     const baseUrl = await boot({ pool });
 
@@ -435,35 +436,28 @@ describe("server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       ok: true,
-      user: { uid: 42, email: "user@example.com" },
+      user: { id: 42, email: "user@example.com" },
     });
     expect(pool.query).toHaveBeenCalledWith(
-      "SELECT uid, email FROM users WHERE uid = $1",
+      "SELECT uid AS id, email FROM users WHERE uid = $1",
       [42]
     );
   });
 
   test("POST /builds saves a build for the authenticated user", async () => {
-    const pool = createPool(async (queryText) => {
-      if (queryText.includes("INSERT INTO saved_builds")) {
-        return {
-          rows: [
-            {
-              id: 5,
-              title: "Balanced 1080p Starter",
-              total_price: "897.00",
-              budget: "1000.00",
-              compatible: true,
-              performance_score: 74,
-              parts: { cpu: { name: "Ryzen 5 5600X" } },
-              created_at: "2026-03-16T10:00:00.000Z",
-            },
-          ],
-        };
-      }
-
-      return { rows: [] };
-    });
+    const pool = createPool(
+      jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ build_id: 5, price: "897.00", validated: true }],
+        }) // INSERT builds
+        .mockResolvedValueOnce({
+          rows: [{ sku: 101, type: "cpu", name: "Ryzen 5 5600X", part_price: "199.00" }],
+        }) // SELECT pc_part by name
+        .mockResolvedValueOnce({ rows: [] }) // INSERT build_pc_parts
+        .mockResolvedValueOnce({ rows: [] }) // COMMIT
+    );
     const baseUrl = await boot({ pool });
 
     const { response, body } = await request(baseUrl, "/builds", {
@@ -489,26 +483,26 @@ describe("server routes", () => {
         budget: 1000,
         compatible: true,
         performanceScore: 74,
-        parts: { cpu: { name: "Ryzen 5 5600X" } },
-        createdAt: "2026-03-16T10:00:00.000Z",
+        parts: { cpu: { sku: 101, name: "Ryzen 5 5600X", price: 199 } },
+        createdAt: null,
       },
     });
   });
 
   test("GET /builds/mine returns the authenticated user's saved builds", async () => {
     const pool = createPool(async (queryText) => {
-      if (queryText.includes("FROM saved_builds")) {
+      if (queryText.includes("FROM builds b")) {
         return {
           rows: [
             {
-              id: 7,
-              title: "Creator Midrange Build",
-              total_price: "1325.00",
-              budget: "1400.00",
-              compatible: true,
-              performance_score: 86,
-              parts: { gpu: { name: "RTX 4070" } },
-              created_at: "2026-03-15T08:00:00.000Z",
+              build_id: 7,
+              price: "1325.00",
+              validated: true,
+              junction_id: 1,
+              sku: 404,
+              type: "gpu",
+              name: "RTX 4070",
+              part_price: "549.00",
             },
           ],
         };
@@ -528,13 +522,13 @@ describe("server routes", () => {
       builds: [
         {
           id: 7,
-          title: "Creator Midrange Build",
+          title: "RTX 4070",
           totalPrice: 1325,
-          budget: 1400,
+          budget: null,
           compatible: true,
-          performanceScore: 86,
-          parts: { gpu: { name: "RTX 4070" } },
-          createdAt: "2026-03-15T08:00:00.000Z",
+          performanceScore: null,
+          parts: { gpu: { sku: 404, name: "RTX 4070", price: 549 } },
+          createdAt: null,
         },
       ],
     });
@@ -578,8 +572,8 @@ describe("server routes", () => {
 
   test("GET /auth/logs returns current user's auth history", async () => {
     const pool = createPool(async (queryText) => {
-      if (queryText.includes("SELECT uid, email FROM users")) {
-        return { rows: [{ uid: 42, email: "user@example.com" }] };
+      if (queryText.includes("SELECT uid AS id, email FROM users")) {
+        return { rows: [{ id: 42, email: "user@example.com" }] };
       }
 
       return { rows: [] };
@@ -588,6 +582,7 @@ describe("server routes", () => {
       events: [
         {
           log_id: 1,
+          uid: 42,
           event_type: "login",
           success: true,
           attempted_email: "user@example.com",
@@ -595,6 +590,7 @@ describe("server routes", () => {
         },
         {
           log_id: 2,
+          uid: 42,
           event_type: "login",
           success: false,
           attempted_email: "user@example.com",
@@ -615,6 +611,7 @@ describe("server routes", () => {
       logs: [
         {
           log_id: 1,
+          uid: 42,
           event_type: "login",
           success: true,
           attempted_email: "user@example.com",
@@ -622,6 +619,7 @@ describe("server routes", () => {
         },
         {
           log_id: 2,
+          uid: 42,
           event_type: "login",
           success: false,
           attempted_email: "user@example.com",

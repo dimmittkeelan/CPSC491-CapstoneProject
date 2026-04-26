@@ -5,43 +5,81 @@ import { createApp } from "../server.js";
 function createInMemoryUserPool() {
   const usersByEmail = new Map();
   let nextId = 1;
+  let nextAuthId = 1;
+
+  async function query(text, params = []) {
+    const normalizedText = text.trim();
+
+    if (normalizedText === "BEGIN" || normalizedText === "COMMIT" || normalizedText === "ROLLBACK") {
+      return { rows: [] };
+    }
+
+    if (normalizedText.startsWith("INSERT INTO users(username, email)")) {
+      const [, email] = params;
+      if (usersByEmail.has(email)) {
+        const err = new Error("duplicate key value violates unique constraint");
+        err.code = "23505";
+        throw err;
+      }
+
+      const user = { id: nextId++, email };
+      usersByEmail.set(email, { ...user, password_hash: null, auth_id: null });
+      return { rows: [{ id: user.id, email: user.email }] };
+    }
+
+    if (normalizedText.startsWith("INSERT INTO auth(uid, password_hash)")) {
+      const [userId, passwordHash] = params;
+      const user = Array.from(usersByEmail.values()).find((candidate) => candidate.id === userId);
+      if (!user) {
+        throw new Error("user missing for auth insert");
+      }
+
+      user.password_hash = passwordHash;
+      user.auth_id = nextAuthId++;
+      return { rows: [{ auth_id: user.auth_id }] };
+    }
+
+    if (normalizedText.includes("FROM users u") && normalizedText.includes("JOIN auth a")) {
+      const [email] = params;
+      const user = usersByEmail.get(email);
+      if (!user) return { rows: [] };
+      return {
+        rows: [
+          {
+            id: user.id,
+            email: user.email,
+            auth_id: user.auth_id,
+            password_hash: user.password_hash,
+            account_lock: false,
+            two_fa: false,
+          },
+        ],
+      };
+    }
+
+    if (normalizedText === "SELECT uid AS id, email FROM users WHERE uid = $1") {
+      const [id] = params;
+      const user = Array.from(usersByEmail.values()).find((u) => u.id === id);
+      if (!user) return { rows: [] };
+      return { rows: [{ id: user.id, email: user.email }] };
+    }
+
+    if (normalizedText === "SELECT 1 as ok") {
+      return { rows: [{ ok: 1 }] };
+    }
+
+    throw new Error(`Unexpected query in test pool: ${text}`);
+  }
 
   return {
     async query(text, params = []) {
-      if (text.startsWith("INSERT INTO users")) {
-        const [email, passwordHash] = params;
-        if (usersByEmail.has(email)) {
-          const err = new Error("duplicate key value violates unique constraint");
-          err.code = "23505";
-          throw err;
-        }
-
-        const user = { id: nextId++, email, password_hash: passwordHash };
-        usersByEmail.set(email, user);
-        return { rows: [{ id: user.id, email: user.email }] };
-      }
-
-      if (text.startsWith("SELECT id, email, password_hash FROM users WHERE email = $1")) {
-        const [email] = params;
-        const user = usersByEmail.get(email);
-        if (!user) return { rows: [] };
-        return {
-          rows: [{ id: user.id, email: user.email, password_hash: user.password_hash }],
-        };
-      }
-
-      if (text.startsWith("SELECT id, email FROM users WHERE id = $1")) {
-        const [id] = params;
-        const user = Array.from(usersByEmail.values()).find((u) => u.id === id);
-        if (!user) return { rows: [] };
-        return { rows: [{ id: user.id, email: user.email }] };
-      }
-
-      if (text.startsWith("SELECT 1 as ok")) {
-        return { rows: [{ ok: 1 }] };
-      }
-
-      throw new Error(`Unexpected query in test pool: ${text}`);
+      return query(text, params);
+    },
+    async connect() {
+      return {
+        query,
+        release() {},
+      };
     },
   };
 }

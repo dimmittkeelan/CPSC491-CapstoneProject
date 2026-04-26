@@ -130,7 +130,7 @@ function requireAuth(req, res, next) {
 function createNoOpAuthLogger() {
   return {
     async logEvent() {},
-    async getRecentEventsForUser() {
+    async getRecentEventsForEmail() {
       return [];
     },
   };
@@ -144,75 +144,79 @@ function isSchemaMismatchError(error) {
   return ["42703", "42P01", "42704"].includes(error?.code);
 }
 
-async function createUserRecord(pool, email, passwordHash) {
+function coerceIdentifier(value) {
+  const numericValue = Number(value);
+  return Number.isSafeInteger(numericValue) ? numericValue : value;
+}
+
+function normalizeUserResponse(row) {
+  return {
+    id: coerceIdentifier(row.id),
+    email: row.email,
+  };
+}
+
+async function createUserRecord(pool, email, passwordHash, username = null) {
+  const client = await pool.connect();
+
   try {
-    return await pool.query(
-      `INSERT INTO users(email, password_hash) VALUES ($1, $2) RETURNING id, email`,
-      [email, passwordHash]
+    await client.query("BEGIN");
+
+    const userResult = await client.query(
+      `INSERT INTO users(username, email)
+       VALUES ($1, $2)
+       RETURNING uid AS id, email`,
+      [username, email]
     );
+    const user = userResult.rows[0];
+
+    const authResult = await client.query(
+      `INSERT INTO auth(uid, password_hash)
+       VALUES ($1, $2)
+       RETURNING auth_id`,
+      [user.id, passwordHash]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      user,
+      authId: authResult.rows[0].auth_id,
+    };
   } catch (error) {
-    if (!isSchemaMismatchError(error)) {
-      throw error;
-    }
-
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-      const userResult = await client.query(
-        `INSERT INTO users(username, email) VALUES ($1, $2) RETURNING uid AS id, email`,
-        [null, email]
-      );
-      await client.query(`INSERT INTO auth(uid, password_hash) VALUES ($1, $2)`, [
-        userResult.rows[0].id,
-        passwordHash,
-      ]);
-      await client.query("COMMIT");
-      return userResult;
-    } catch (transactionError) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw transactionError;
-    } finally {
-      client.release();
-    }
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 async function findUserByEmail(pool, email) {
-  try {
-    return await pool.query(`SELECT id, email, password_hash FROM users WHERE email = $1`, [email]);
-  } catch (error) {
-    if (!isSchemaMismatchError(error)) {
-      throw error;
-    }
-
-    return pool.query(
-      `SELECT users.uid AS id, users.email, auth.password_hash
-         FROM users
-         JOIN auth ON auth.uid = users.uid
-        WHERE users.email = $1`,
-      [email]
-    );
-  }
+  return pool.query(
+    `SELECT
+        u.uid AS id,
+        u.email,
+        a.auth_id,
+        a.password_hash,
+        a.account_lock,
+        a.two_fa
+      FROM users u
+      JOIN auth a ON a.uid = u.uid
+      WHERE u.email = $1`,
+    [email]
+  );
 }
 
 async function findUserById(pool, userId) {
-  try {
-    return await pool.query("SELECT id, email FROM users WHERE id = $1", [userId]);
-  } catch (error) {
-    if (!isSchemaMismatchError(error)) {
-      throw error;
-    }
-
-    return pool.query("SELECT uid AS id, email FROM users WHERE uid = $1", [userId]);
-  }
+  return pool.query("SELECT uid AS id, email FROM users WHERE uid = $1", [userId]);
 }
 
 export async function ensureAuthLogTable(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_logs (
-      id BIGSERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      log_id BIGSERIAL PRIMARY KEY,
+      auth_id BIGINT REFERENCES auth(auth_id) ON DELETE CASCADE,
+      uid BIGINT REFERENCES auth(uid) ON DELETE SET NULL,
       attempted_email TEXT,
       event_type TEXT NOT NULL,
       success BOOLEAN NOT NULL,
@@ -226,36 +230,225 @@ export async function ensureAuthLogTable(pool) {
 
 export async function ensureSavedBuildTable(pool) {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS saved_builds (
-      id BIGSERIAL PRIMARY KEY,
-      user_id BIGINT NOT NULL,
-      title TEXT NOT NULL,
-      total_price NUMERIC(10, 2),
-      budget NUMERIC(10, 2),
-      compatible BOOLEAN NOT NULL DEFAULT TRUE,
-      performance_score INTEGER,
-      parts JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    CREATE TABLE IF NOT EXISTS builds (
+      build_id BIGSERIAL PRIMARY KEY,
+      uid BIGINT REFERENCES users(uid) ON DELETE CASCADE,
+      price DECIMAL(10, 2),
+      validated BOOLEAN DEFAULT FALSE
     )
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_saved_builds_user_created
-      ON saved_builds(user_id, created_at DESC)
+    CREATE TABLE IF NOT EXISTS build_pc_parts (
+      junction_id BIGSERIAL PRIMARY KEY,
+      build_id BIGINT NOT NULL REFERENCES builds(build_id) ON DELETE CASCADE,
+      sku BIGINT NOT NULL REFERENCES pc_parts(sku) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_builds_uid_build_id
+      ON builds(uid, build_id DESC)
   `);
 }
 
-function normalizeSavedBuildRow(row) {
+function normalizePartTypeKey(type, fallbackKey = "part") {
+  const normalizedType = typeof type === "string" ? type.trim().toLowerCase() : "";
+
+  if (!normalizedType) {
+    return fallbackKey;
+  }
+
+  if (normalizedType === "motherboard") {
+    return "mobo";
+  }
+
+  if (normalizedType === "graphics card") {
+    return "gpu";
+  }
+
+  if (normalizedType === "power supply") {
+    return "psu";
+  }
+
+  return normalizedType;
+}
+
+function setPartRecord(parts, key, record) {
+  if (!parts[key]) {
+    parts[key] = record;
+    return;
+  }
+
+  let index = 2;
+  while (parts[`${key}_${index}`]) {
+    index += 1;
+  }
+
+  parts[`${key}_${index}`] = record;
+}
+
+function buildPartsPayload(partRows = []) {
+  const parts = {};
+
+  for (const row of partRows) {
+    if (!row?.sku || !row?.name) {
+      continue;
+    }
+
+    const partKey = normalizePartTypeKey(row.type, "part");
+
+    setPartRecord(parts, partKey, {
+      sku: coerceIdentifier(row.sku),
+      name: row.name,
+      price: row.part_price === null || row.part_price === undefined ? null : Number(row.part_price),
+    });
+  }
+
+  return parts;
+}
+
+function deriveBuildTitle(parts = {}, fallbackId) {
+  const preferredParts = [parts.cpu?.name, parts.gpu?.name].filter(Boolean);
+
+  if (preferredParts.length === 2) {
+    return `${preferredParts[0]} + ${preferredParts[1]}`;
+  }
+
+  const firstNamedPart = Object.values(parts)
+    .map((part) => part?.name)
+    .find(Boolean);
+
+  if (firstNamedPart) {
+    return firstNamedPart;
+  }
+
+  return `Build #${fallbackId}`;
+}
+
+function normalizeBuildPayload({
+  buildId,
+  price,
+  validated,
+  parts = {},
+  title = null,
+  budget = null,
+  performanceScore = null,
+  createdAt = null,
+}) {
   return {
-    id: row.id,
-    title: row.title,
-    totalPrice: row.total_price === null ? null : Number(row.total_price),
-    budget: row.budget === null ? null : Number(row.budget),
-    compatible: row.compatible,
-    performanceScore: row.performance_score,
-    parts: row.parts ?? {},
-    createdAt: row.created_at,
+    id: coerceIdentifier(buildId),
+    title: title || deriveBuildTitle(parts, buildId),
+    totalPrice: price === null || price === undefined ? null : Number(price),
+    budget,
+    compatible: Boolean(validated),
+    performanceScore,
+    parts,
+    createdAt,
   };
+}
+
+function normalizeBuildRows(rows = []) {
+  const builds = new Map();
+
+  for (const row of rows) {
+    const buildId = row.build_id;
+
+    if (!builds.has(buildId)) {
+      builds.set(buildId, {
+        buildId,
+        price: row.price,
+        validated: row.validated,
+        partRows: [],
+      });
+    }
+
+    if (row.sku && row.name) {
+      builds.get(buildId).partRows.push(row);
+    }
+  }
+
+  return Array.from(builds.values()).map((build) =>
+    normalizeBuildPayload({
+      buildId: build.buildId,
+      price: build.price,
+      validated: build.validated,
+      parts: buildPartsPayload(build.partRows),
+    })
+  );
+}
+
+async function resolvePcPart(client, part, fallbackTypeKey) {
+  if (!part || typeof part !== "object") {
+    return null;
+  }
+
+  if (part.sku !== undefined && part.sku !== null) {
+    const { rows } = await client.query(
+      `SELECT sku, type, name, price AS part_price
+       FROM pc_parts
+       WHERE sku = $1`,
+      [part.sku]
+    );
+
+    if (rows[0]) {
+      return rows[0];
+    }
+  }
+
+  if (typeof part.name !== "string" || !part.name.trim()) {
+    return null;
+  }
+
+  const { rows } = await client.query(
+    `SELECT sku, type, name, price AS part_price
+     FROM pc_parts
+     WHERE LOWER(name) = LOWER($1)
+     LIMIT 1`,
+    [part.name.trim()]
+  );
+
+  if (rows[0]) {
+    return rows[0];
+  }
+
+  return {
+    sku: null,
+    type: fallbackTypeKey,
+    name: part.name.trim(),
+    part_price: part.price ?? null,
+  };
+}
+
+async function attachBuildParts(client, buildId, parts = {}) {
+  const attachedParts = {};
+
+  for (const [requestedKey, part] of Object.entries(parts)) {
+    const resolvedPart = await resolvePcPart(client, part, requestedKey);
+
+    if (!resolvedPart) {
+      continue;
+    }
+
+    if (resolvedPart.sku !== null) {
+      await client.query(
+        `INSERT INTO build_pc_parts(build_id, sku)
+         VALUES ($1, $2)`,
+        [buildId, resolvedPart.sku]
+      );
+    }
+
+    setPartRecord(attachedParts, normalizePartTypeKey(resolvedPart.type, requestedKey), {
+      sku: resolvedPart.sku === null ? null : coerceIdentifier(resolvedPart.sku),
+      name: resolvedPart.name,
+      price:
+        resolvedPart.part_price === null || resolvedPart.part_price === undefined
+          ? null
+          : Number(resolvedPart.part_price),
+    });
+  }
+
+  return attachedParts;
 }
 
 export function createAuthLogger(pool) {
@@ -263,39 +456,41 @@ export function createAuthLogger(pool) {
 
   return {
     async logEvent({
-                     authId = null,
-                     attemptedEmail = null,
-                     eventType,
-                     success,
-                     failureReason = null,
-                     ipAddress = null,
-                     userAgent = null,
-                   }) {
+      authId = null,
+      userId = null,
+      attemptedEmail = null,
+      eventType,
+      success,
+      failureReason = null,
+      ipAddress = null,
+      userAgent = null,
+    }) {
       await pool.query(
-          `INSERT INTO auth_logs
-           (auth_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [
-            authId,
-            attemptedEmail,
-            eventType,
-            success,
-            failureReason,
-            ipAddress,
-            userAgent,
-          ]
+        `INSERT INTO auth_logs
+         (auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          authId,
+          userId,
+          attemptedEmail,
+          eventType,
+          success,
+          failureReason,
+          ipAddress,
+          userAgent,
+        ]
       );
     },
 
     async getRecentEventsForEmail({ email, limit = 50 }) {
       const { rows } = await pool.query(
-          `SELECT log_id, auth_id, attempted_email, event_type, success, failure_reason, ip_address,
-                  user_agent, created_at
-           FROM auth_logs
-           WHERE attempted_email = $1
-           ORDER BY created_at DESC
-             LIMIT $2`,
-          [email, limit]
+        `SELECT log_id, auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address,
+                user_agent, created_at
+         FROM auth_logs
+         WHERE attempted_email = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [email, limit]
       );
 
       return rows;
@@ -403,41 +598,69 @@ export function createApp({
       return res.status(400).json({ ok: false, error: "parts must be an object" });
     }
 
+    const client = await pool.connect();
+
     try {
-      const { rows } = await pool.query(
-        `INSERT INTO saved_builds
-          (user_id, title, total_price, budget, compatible, performance_score, parts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, title, total_price, budget, compatible, performance_score, parts, created_at`,
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `INSERT INTO builds(uid, price, validated)
+         VALUES ($1, $2, $3)
+         RETURNING build_id, price, validated`,
         [
           req.session.userId,
-          title,
           totalPrice,
-          budget,
           compatible,
-          performanceScore,
-          JSON.stringify(parts),
         ]
       );
 
-      return res.json({ ok: true, build: normalizeSavedBuildRow(rows[0]) });
+      const build = rows[0];
+      const attachedParts = await attachBuildParts(client, build.build_id, parts);
+
+      await client.query("COMMIT");
+
+      return res.json({
+        ok: true,
+        build: normalizeBuildPayload({
+          buildId: build.build_id,
+          price: build.price,
+          validated: build.validated,
+          parts: attachedParts,
+          title,
+          budget,
+          performanceScore,
+        }),
+      });
     } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
       console.error(error);
       return res.status(500).json({ ok: false, error: "Server error" });
+    } finally {
+      client.release();
     }
   });
 
   app.get("/builds/mine", requireAuth, async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, title, total_price, budget, compatible, performance_score, parts, created_at
-           FROM saved_builds
-          WHERE user_id = $1
-          ORDER BY created_at DESC`,
+        `SELECT
+            b.build_id,
+            b.price,
+            b.validated,
+            bp.junction_id,
+            p.sku,
+            p.type,
+            p.name,
+            p.price AS part_price
+          FROM builds b
+          LEFT JOIN build_pc_parts bp ON bp.build_id = b.build_id
+          LEFT JOIN pc_parts p ON p.sku = bp.sku
+          WHERE b.uid = $1
+          ORDER BY b.build_id DESC, bp.junction_id ASC`,
         [req.session.userId]
       );
 
-      return res.json({ ok: true, builds: rows.map(normalizeSavedBuildRow) });
+      return res.json({ ok: true, builds: normalizeBuildRows(rows) });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ ok: false, error: "Server error" });
@@ -453,8 +676,8 @@ export function createApp({
 
     try {
       const { rowCount } = await pool.query(
-        `DELETE FROM saved_builds
-          WHERE id = $1 AND user_id = $2`,
+        `DELETE FROM builds
+         WHERE build_id = $1 AND uid = $2`,
         [buildId, req.session.userId]
       );
 
@@ -484,41 +707,21 @@ export function createApp({
     }
 
     const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
-    const passwordHash = await bcryptLib.hash(password, 12);
-
-    const client = await pool.connect();
+    const passwordHash = await resolvedBcrypt.hash(password, 12);
 
     try {
-      await client.query("BEGIN");
-
-      const userResult = await client.query(
-          `
-            INSERT INTO users (username, email)
-            VALUES ($1, $2)
-              RETURNING uid, username, email
-          `,
-          [username ?? null, normalizedEmail]
+      const { user, authId } = await createUserRecord(
+        pool,
+        normalizedEmail,
+        passwordHash,
+        username ?? null
       );
 
-      const user = userResult.rows[0];
-
-      const authResult = await client.query(
-          `
-      INSERT INTO auth (uid, password_hash)
-      VALUES ($1, $2)
-      RETURNING auth_id
-      `,
-          [user.uid, passwordHash]
-      );
-
-      const auth = authResult.rows[0];
-
-      await client.query("COMMIT");
-
-      req.session.userId = user.uid;
+      req.session.userId = coerceIdentifier(user.id);
 
       await resolvedAuthLogger.logEvent({
-        authId: auth.auth_id,
+        authId,
+        userId: user.id,
         attemptedEmail: user.email,
         eventType: "register",
         success: true,
@@ -528,11 +731,9 @@ export function createApp({
 
       return res.json({
         ok: true,
-        user,
+        user: normalizeUserResponse(user),
       });
     } catch (e) {
-      await client.query("ROLLBACK");
-
       if (e.code === "23505") {
         await resolvedAuthLogger.logEvent({
           attemptedEmail: normalizedEmail,
@@ -557,8 +758,6 @@ export function createApp({
 
       console.error(e);
       return res.status(500).json({ ok: false, error: "Server error" });
-    } finally {
-      client.release();
     }
   });
 
@@ -582,22 +781,7 @@ export function createApp({
             .json({ ok: false, error: "email/password required" });
       }
 
-      const { rows } = await pool.query(
-          `
-      SELECT
-        u.uid,
-        u.username,
-        u.email,
-        a.auth_id,
-        a.password_hash,
-        a.account_lock,
-        a.two_fa
-      FROM users u
-      JOIN auth a ON u.uid = a.uid
-      WHERE u.email = $1
-      `,
-          [normalizedEmail]
-      );
+      const { rows } = await findUserByEmail(pool, normalizedEmail);
 
       if (rows.length === 0) {
         await safeLogAuthEvent({
@@ -613,11 +797,11 @@ export function createApp({
       }
 
       const user = rows[0];
-      //const ok = await resolvedBcrypt.compare(password, user.password_hash);
 
       if (user.account_lock) {
         await resolvedAuthLogger.logEvent({
           authId: user.auth_id,
+          userId: user.id,
           attemptedEmail: user.email,
           eventType: "login",
           success: false,
@@ -629,11 +813,12 @@ export function createApp({
         return res.status(403).json({ ok: false, error: "Account locked" });
       }
 
-      const ok = await bcryptLib.compare(password, user.password_hash);
+      const ok = await resolvedBcrypt.compare(password, user.password_hash);
 
       if (!ok) {
         await resolvedAuthLogger.logEvent({
           authId: user.auth_id,
+          userId: user.id,
           attemptedEmail: user.email,
           eventType: "login",
           success: false,
@@ -645,10 +830,11 @@ export function createApp({
         return res.status(401).json({ ok: false, error: "Invalid credentials" });
       }
 
-      req.session.userId = user.uid;
+      req.session.userId = coerceIdentifier(user.id);
 
       await resolvedAuthLogger.logEvent({
         authId: user.auth_id,
+        userId: user.id,
         attemptedEmail: user.email,
         eventType: "login",
         success: true,
@@ -658,11 +844,7 @@ export function createApp({
 
       return res.json({
         ok: true,
-        user: {
-          uid: user.uid,
-          username: user.username,
-          email: user.email,
-        },
+        user: normalizeUserResponse(user),
       });
     } catch (e) {
       await safeLogAuthEvent({
@@ -682,11 +864,8 @@ export function createApp({
 
   app.get("/auth/me", requireAuth, async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        "SELECT uid, email FROM users WHERE uid = $1",
-        [req.session.userId]
-      );
-      return res.json({ ok: true, user: rows[0] });
+      const { rows } = await findUserById(pool, req.session.userId);
+      return res.json({ ok: true, user: rows[0] ? normalizeUserResponse(rows[0]) : null });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: "Server error" });
@@ -704,10 +883,7 @@ export function createApp({
 
   app.get("/auth/logs", requireAuth, async (req, res) => {
     try {
-      const { rows } = await pool.query(
-          "SELECT uid, email FROM users WHERE uid = $1",
-          [req.session.userId]
-      );
+      const { rows } = await findUserById(pool, req.session.userId);
 
       if (rows.length === 0) {
         return res.status(404).json({ ok: false, error: "User not found" });
