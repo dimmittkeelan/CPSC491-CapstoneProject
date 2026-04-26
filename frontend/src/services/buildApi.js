@@ -50,3 +50,17 @@ export async function deleteSavedBuild(buildId) {
 
   return data;
 }
+
+export async function fetchParts() {
+  const data = await requestJson("/api/parts", { method: "GET"});
+  return data.parts ?? {};
+}
+
+export async function fetchRecommendation(budget) {
+  const data = await requestJson("/api/recommend", {
+    method: "POST",
+    body: JSON.stringify({ budget }),
+  });
+  return data;
+}
+

@@ -656,4 +656,66 @@ describe("server routes", () => {
     expect(response.status).toBe(500);
     expect(body).toEqual({ ok: false, error: "db down" });
   });
+
+    test("GET /api/parts returns all five part categories", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/api/parts");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.parts).toHaveProperty("cpu");
+    expect(body.parts).toHaveProperty("gpu");
+    expect(body.parts).toHaveProperty("ram");
+    expect(body.parts).toHaveProperty("mobo");
+    expect(body.parts).toHaveProperty("psu");
+  });
+
+  test("POST /api/recommend rejects a missing budget", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/api/recommend", {
+      method: "POST",
+      body: {},
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "Valid budget is required" });
+  });
+
+  test("POST /api/recommend rejects a zero budget", async () => {
+    const baseUrl = await boot();
+
+    const { response, body } = await request(baseUrl, "/api/recommend", {
+      method: "POST",
+      body: { budget: 0 },
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "Valid budget is required" });
+  });
+
+  test("POST /api/recommend CPU and mobo have matching sockets", async () => {
+    const baseUrl = await boot();
+
+    const { body } = await request(baseUrl, "/api/recommend", {
+      method: "POST",
+      body: { budget: 1000 },
+    });
+
+    expect(body.ok).toBe(true);
+    expect(body.parts.cpu.socket).toBe(body.parts.mobo.socket);
+  });
+
+  test("POST /api/recommend RAM type matches mobo RAM type", async () => {
+    const baseUrl = await boot();
+
+    const { body } = await request(baseUrl, "/api/recommend", {
+      method: "POST",
+      body: { budget: 1000 },
+    });
+
+    expect(body.ok).toBe(true);
+    expect(body.parts.ram.type).toBe(body.parts.mobo.ramType);
+  });
 });

@@ -70,3 +70,94 @@ test('TC-05: PSU underpowered warning appears', () => {
 
   expect(result.current.issues.some(i => i.includes('PSU'))).toBe(true)
 })
+
+// TC-06: loadBuild pre-populates all parts at once
+test('TC-06: loadBuild pre-populates all parts at once', () => {
+  const { result } = renderHook(() => useBuild(), { wrapper })
+
+  act(() => {
+    result.current.loadBuild({
+      cpu:  { id: 'cpu-1',  name: 'Ryzen 5 5600X', price: 199, tdp: 65,  socket: 'AM4' },
+      gpu:  { id: 'gpu-1',  name: 'RTX 3060',       price: 329, tdp: 170 },
+      ram:  { id: 'ram-1',  name: '16GB DDR4',       price: 45,  type: 'DDR4' },
+      mobo: { id: 'mobo-1', name: 'MSI B550-A Pro',  price: 129, socket: 'AM4', ramType: 'DDR4' },
+      psu:  { id: 'psu-1',  name: 'EVGA 500W',       price: 49,  wattage: 500 },
+    })
+  })
+
+  expect(result.current.selected.cpu.name).toBe('Ryzen 5 5600X')
+  expect(result.current.selected.gpu.name).toBe('RTX 3060')
+  expect(result.current.selected.ram.name).toBe('16GB DDR4')
+  expect(result.current.selected.mobo.name).toBe('MSI B550-A Pro')
+  expect(result.current.selected.psu.name).toBe('EVGA 500W')
+})
+
+// TC-07: loadBuild calculates total price correctly
+test('TC-07: loadBuild calculates total price correctly', () => {
+  const { result } = renderHook(() => useBuild(), { wrapper })
+
+  act(() => {
+    result.current.loadBuild({
+      cpu:  { price: 199, tdp: 65,  socket: 'AM4' },
+      gpu:  { price: 329, tdp: 170 },
+      ram:  { price: 45,  type: 'DDR4' },
+      mobo: { price: 129, socket: 'AM4', ramType: 'DDR4' },
+      psu:  { price: 49,  wattage: 500 },
+    })
+  })
+
+  expect(result.current.totalPrice).toBe(199 + 329 + 45 + 129 + 49)
+})
+
+// TC-08: loadBuild with compatible parts reports no issues
+test('TC-08: loadBuild with compatible parts reports no issues', () => {
+  const { result } = renderHook(() => useBuild(), { wrapper })
+
+  act(() => {
+    result.current.loadBuild({
+      cpu:  { price: 199, tdp: 65,  socket: 'AM4' },
+      gpu:  { price: 329, tdp: 170 },
+      ram:  { price: 45,  type: 'DDR4' },
+      mobo: { price: 129, socket: 'AM4', ramType: 'DDR4' },
+      psu:  { price: 129, wattage: 750 },
+    })
+  })
+
+  expect(result.current.issues).toEqual([])
+})
+
+// TC-09: setBudget updates the budget value
+test('TC-09: setBudget updates the budget value', () => {
+  const { result } = renderHook(() => useBuild(), { wrapper })
+
+  expect(result.current.budget).toBe(0)
+
+  act(() => {
+    result.current.setBudget(1000)
+  })
+
+  expect(result.current.budget).toBe(1000)
+})
+
+// TC-10: clearBuild after loadBuild resets all parts
+test('TC-10: clearBuild after loadBuild resets all selected parts', () => {
+  const { result } = renderHook(() => useBuild(), { wrapper })
+
+  act(() => {
+    result.current.loadBuild({
+      cpu:  { price: 199, tdp: 65,  socket: 'AM4' },
+      gpu:  { price: 329, tdp: 170 },
+      ram:  { price: 45,  type: 'DDR4' },
+      mobo: { price: 129, socket: 'AM4', ramType: 'DDR4' },
+      psu:  { price: 49,  wattage: 500 },
+    })
+  })
+
+  act(() => {
+    result.current.clearBuild()
+  })
+
+  expect(result.current.selected.cpu).toBeNull()
+  expect(result.current.selected.gpu).toBeNull()
+  expect(result.current.totalPrice).toBe(0)
+})

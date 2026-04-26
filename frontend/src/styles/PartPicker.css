@@ -3,7 +3,6 @@
   background: radial-gradient(1200px 600px at 50% 0%, rgba(146, 81, 255, 0.18), transparent 60%),
     #0b0b0f;
   color: #eee;
-  margin: -24px;
   display: flex;
   flex-direction: column;
 }
@@ -253,4 +252,32 @@ position: sticky;
   .pickerBtn {
     flex: 1;
   }
+}
+
+.pickerBanner {
+  background: rgba(138, 43, 226, 0.15);
+  border: 1px solid rgba(138, 43, 226, 0.4);
+  border-radius: 8px;
+  padding: 12px 20px;
+  margin: 0 auto 16px;
+  max-width: 900px;
+  text-align: center;
+  color: #ccc;
+  font-size: 0.95rem;
+}
+
+.pickerBanner strong {
+  color: #a970ff;
+}
+
+.pickerFooter__budget {
+  color: #888;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.pickerStatus {
+  text-align: center;
+  color: #888;
+  padding: 40px;
 }
