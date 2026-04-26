@@ -214,8 +214,9 @@ async function findUserById(pool, userId) {
 export async function ensureAuthLogTable(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_logs (
-      id BIGSERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(uid) ON DELETE SET NULL,
+      log_id BIGSERIAL PRIMARY KEY,
+      auth_id BIGINT REFERENCES auth(auth_id) ON DELETE CASCADE,
+      uid INTEGER REFERENCES auth(uid) ON DELETE SET NULL,
       attempted_email TEXT,
       event_type TEXT NOT NULL,
       success BOOLEAN NOT NULL,
@@ -276,8 +277,8 @@ export function createAuthLogger(pool) {
                    }) {
       await pool.query(
           `INSERT INTO auth_logs
-           (user_id, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           (auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
+           VALUES ((SELECT auth_id FROM auth WHERE uid = $1), $1, $2, $3, $4, $5, $6, $7)`,
           [
             userId,
             attemptedEmail,
@@ -292,10 +293,10 @@ export function createAuthLogger(pool) {
 
     async getRecentEventsForUser({ userId, limit = 50 }) {
       const { rows } = await pool.query(
-          `SELECT id AS log_id, user_id, attempted_email, event_type, success, failure_reason, ip_address,
+          `SELECT log_id, auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address,
                   user_agent, created_at
            FROM auth_logs
-           WHERE user_id = $1
+           WHERE uid = $1
            ORDER BY created_at DESC
              LIMIT $2`,
           [userId, limit]
