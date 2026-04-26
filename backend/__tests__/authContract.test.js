@@ -6,75 +6,69 @@ function createInMemoryUserPool() {
   const usersByEmail = new Map();
   const usersById = new Map();
   const authByUid = new Map();
-  let nextId = 1;
+  let nextUid = 1;
   let nextAuthId = 1;
 
-  const handleQuery = async (text, params = []) => {
-    if (text.startsWith("BEGIN") || text.startsWith("COMMIT") || text.startsWith("ROLLBACK")) {
+  async function handleQuery(text, params = []) {
+    const trimmed = text.trim();
+
+    if (trimmed === "BEGIN" || trimmed === "COMMIT" || trimmed === "ROLLBACK") {
       return { rows: [] };
     }
 
-    if (text.includes("INSERT INTO users")) {
+    if (trimmed.startsWith("INSERT INTO users")) {
       const [username, email] = params;
       if (usersByEmail.has(email)) {
         const err = new Error("duplicate key value violates unique constraint");
         err.code = "23505";
         throw err;
       }
-
-      const user = { uid: nextId++, username: username ?? null, email };
+      const uid = nextUid++;
+      const user = { uid, username, email };
       usersByEmail.set(email, user);
-      usersById.set(user.uid, user);
+      usersById.set(uid, user);
       return { rows: [{ uid: user.uid, username: user.username, email: user.email }] };
     }
 
-    if (text.includes("INSERT INTO auth")) {
+    if (trimmed.startsWith("INSERT INTO auth")) {
       const [uid, passwordHash] = params;
-      authByUid.set(uid, {
-        auth_id: nextAuthId++,
-        password_hash: passwordHash,
-        account_lock: false,
-        two_fa: false,
-      });
-      return { rows: [{ auth_id: authByUid.get(uid).auth_id }] };
+      const auth_id = nextAuthId++;
+      authByUid.set(uid, { auth_id, uid, password_hash: passwordHash, account_lock: false, two_fa: false });
+      return { rows: [{ auth_id }] };
     }
 
-    if (text.includes("FROM users u") && text.includes("JOIN auth a") && text.includes("WHERE u.email = $1")) {
+    if (trimmed.includes("FROM users u") && trimmed.includes("JOIN auth a")) {
       const [email] = params;
       const user = usersByEmail.get(email);
       if (!user) return { rows: [] };
-
       const auth = authByUid.get(user.uid);
       if (!auth) return { rows: [] };
-
       return {
-        rows: [
-          {
-            uid: user.uid,
-            username: user.username,
-            email: user.email,
-            auth_id: auth.auth_id,
-            password_hash: auth.password_hash,
-            account_lock: auth.account_lock,
-            two_fa: auth.two_fa,
-          },
-        ],
+        rows: [{
+          uid: user.uid,
+          username: user.username,
+          email: user.email,
+          auth_id: auth.auth_id,
+          password_hash: auth.password_hash,
+          account_lock: auth.account_lock,
+          two_fa: auth.two_fa,
+        }],
       };
     }
 
-    if (text.startsWith("SELECT uid, email FROM users WHERE uid = $1")) {
+    if (trimmed.startsWith("SELECT uid, email FROM users WHERE uid = $1")) {
       const [uid] = params;
       const user = usersById.get(uid);
       if (!user) return { rows: [] };
       return { rows: [{ uid: user.uid, email: user.email }] };
     }
 
-    if (text.startsWith("SELECT 1 as ok")) {
+    if (trimmed.startsWith("SELECT 1 as ok")) {
       return { rows: [{ ok: 1 }] };
     }
 
     throw new Error(`Unexpected query in test pool: ${text}`);
-  };
+  }
 
   return {
     async query(text, params = []) {
@@ -121,7 +115,10 @@ describe("Auth contract", () => {
 
     expect(register.status).toBe(200);
     expect(register.body.ok).toBe(true);
-    expect(register.body.user).toEqual({ id: 1, email: "test@example.com" });
+    expect(register.body.user).toEqual({
+      id: 1,
+      email: "test@example.com",
+    });
 
     const me = await agent.get("/auth/me");
     expect(me.status).toBe(200);

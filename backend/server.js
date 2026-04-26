@@ -67,12 +67,12 @@ function applyCors(app, allowedOrigins = parseAllowedOrigins()) {
 function getSessionCookieConfig() {
   const isProduction = process.env.NODE_ENV === "production";
   const configuredSameSite = process.env.SESSION_COOKIE_SAMESITE?.trim().toLowerCase();
-  const validSameSite = new Set(["lax", "strict", "none"]);
+  const validSameSite = new Set(["none"]);
   const sameSite = validSameSite.has(configuredSameSite)
     ? configuredSameSite
     : isProduction
       ? "none"
-      : "lax";
+      : "none";
 
   let secure = parseBooleanEnv(process.env.SESSION_COOKIE_SECURE, isProduction);
   if (sameSite === "none") {
@@ -329,7 +329,7 @@ export function createSessionMiddleware(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: "none",
       secure: process.env.NODE_ENV === "production",
       maxAge: 1000 * 60 * 60 * 8,
     },
@@ -576,7 +576,9 @@ export function createApp({
         },
       });
     } catch (e) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {}
 
       if (e.code === "23505") {
         await resolvedAuthLogger.logEvent({
