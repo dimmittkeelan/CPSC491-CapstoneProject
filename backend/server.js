@@ -275,12 +275,32 @@ export function createAuthLogger(pool) {
                      ipAddress = null,
                      userAgent = null,
                    }) {
+      const { rows: authRows } = await pool.query(
+        `
+          SELECT a.auth_id, a.uid
+          FROM auth a
+          LEFT JOIN users u ON u.uid = a.uid
+          WHERE ($1::bigint IS NOT NULL AND a.uid = $1)
+             OR ($1::bigint IS NULL AND $2::text IS NOT NULL AND u.email = $2)
+          ORDER BY a.auth_id ASC
+          LIMIT 1
+        `,
+        [userId, attemptedEmail]
+      );
+
+      const authRow = authRows[0];
+
+      if (!authRow?.auth_id) {
+        return;
+      }
+
       await pool.query(
           `INSERT INTO auth_logs
            (auth_id, uid, attempted_email, event_type, success, failure_reason, ip_address, user_agent)
-           VALUES ((SELECT auth_id FROM auth WHERE uid = $1), $1, $2, $3, $4, $5, $6, $7)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
-            userId,
+            authRow.auth_id,
+            authRow.uid,
             attemptedEmail,
             eventType,
             success,
@@ -675,7 +695,7 @@ export function createApp({
 
       req.session.userId = user.uid;
 
-      await resolvedAuthLogger.logEvent({
+      await safeLogAuthEvent({
         userId: user.uid,
         attemptedEmail: user.email,
         eventType: "register",
@@ -697,7 +717,7 @@ export function createApp({
       } catch (_) {}
 
       if (e.code === "23505") {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           attemptedEmail: normalizedEmail,
           eventType: "register",
           success: false,
@@ -731,7 +751,7 @@ export function createApp({
       const normalizedEmail = typeof email === "string" ? email.toLowerCase() : null;
 
       if (!email || !password) {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           attemptedEmail: normalizedEmail,
           eventType: "login",
           success: false,
@@ -779,7 +799,7 @@ export function createApp({
       //const ok = await resolvedBcrypt.compare(password, user.password_hash);
 
       if (user.account_lock) {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           userId: user.uid,
           attemptedEmail: user.email,
           eventType: "login",
@@ -795,7 +815,7 @@ export function createApp({
       const ok = await bcryptLib.compare(password, user.password_hash);
 
       if (!ok) {
-        await resolvedAuthLogger.logEvent({
+        await safeLogAuthEvent({
           userId: user.uid,
           attemptedEmail: user.email,
           eventType: "login",
@@ -810,7 +830,7 @@ export function createApp({
 
       req.session.userId = user.uid;
 
-      await resolvedAuthLogger.logEvent({
+      await safeLogAuthEvent({
         userId: user.uid,
         attemptedEmail: user.email,
         eventType: "login",
