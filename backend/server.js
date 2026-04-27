@@ -143,6 +143,54 @@ export function createPool(connectionString = process.env.DATABASE_URL) {
   return new pg.Pool({ connectionString });
 }
 
+function normalizePartCategory(type) {
+  const normalized = String(type ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) return "part";
+  if (normalized.includes("mother")) return "mobo";
+  if (normalized.includes("mainboard")) return "mobo";
+  if (normalized === "mobo") return "mobo";
+  if (normalized.includes("graphics")) return "gpu";
+  if (normalized.includes("video")) return "gpu";
+  if (normalized.includes("memory")) return "ram";
+  if (normalized.includes("power supply")) return "psu";
+
+  return normalized.replace(/\s+/g, "_");
+}
+
+function buildPartsObject(partRows = []) {
+  return partRows.reduce((parts, row) => {
+    const key = normalizePartCategory(row.type);
+    parts[key] = {
+      sku: row.sku === null ? null : Number(row.sku),
+      type: row.type,
+      name: row.name,
+      price: row.price === null ? null : Number(row.price),
+      inventory: row.inventory === null ? null : Number(row.inventory),
+    };
+    return parts;
+  }, {});
+}
+
+function buildSavedBuildResponse(buildRow, partRows = []) {
+  const parts = buildPartsObject(partRows);
+  const cpuName = parts.cpu?.name ?? "Custom";
+  const gpuName = parts.gpu?.name ?? "Build";
+
+  return {
+    id: Number(buildRow.build_id),
+    title: `${cpuName} + ${gpuName}`,
+    totalPrice: buildRow.price === null ? null : Number(buildRow.price),
+    budget: null,
+    compatible: Boolean(buildRow.validated),
+    performanceScore: null,
+    parts,
+    createdAt: null,
+  };
+}
+
 function isSchemaMismatchError(error) {
   return ["42703", "42P01", "42704"].includes(error?.code);
 }
@@ -230,36 +278,25 @@ export async function ensureAuthLogTable(pool) {
 
 export async function ensureSavedBuildTable(pool) {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS saved_builds (
-      id BIGSERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      total_price NUMERIC(10, 2),
-      budget NUMERIC(10, 2),
-      compatible BOOLEAN NOT NULL DEFAULT TRUE,
-      performance_score INTEGER,
-      parts JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    CREATE TABLE IF NOT EXISTS builds (
+      build_id BIGSERIAL PRIMARY KEY,
+      uid BIGINT REFERENCES users(uid) ON DELETE CASCADE,
+      price NUMERIC(10, 2),
+      validated BOOLEAN DEFAULT FALSE
     )
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_saved_builds_user_created
-      ON saved_builds(user_id, created_at DESC)
+    CREATE TABLE IF NOT EXISTS build_pc_parts (
+      junction_id BIGSERIAL PRIMARY KEY,
+      build_id BIGINT NOT NULL REFERENCES builds(build_id) ON DELETE CASCADE,
+      sku BIGINT NOT NULL REFERENCES pc_parts(sku) ON DELETE CASCADE
+    )
   `);
 }
 
 function normalizeSavedBuildRow(row) {
-  return {
-    id: row.id,
-    title: row.title,
-    totalPrice: row.total_price === null ? null : Number(row.total_price),
-    budget: row.budget === null ? null : Number(row.budget),
-    compatible: row.compatible,
-    performanceScore: row.performance_score,
-    parts: row.parts ?? {},
-    createdAt: row.created_at,
-  };
+  return buildSavedBuildResponse(row, row.part_rows ?? []);
 }
 
 export function createAuthLogger(pool) {
@@ -565,53 +602,117 @@ export function createApp({
 
   app.post("/builds", requireAuth, async (req, res) => {
     const {
-      title,
       totalPrice = null,
-      budget = null,
       compatible = true,
-      performanceScore = null,
       parts = {},
     } = req.body ?? {};
-
-    if (!title || typeof title !== "string") {
-      return res.status(400).json({ ok: false, error: "title required" });
-    }
 
     if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
       return res.status(400).json({ ok: false, error: "parts must be an object" });
     }
 
-    try {
-      const { rows } = await pool.query(
-        `INSERT INTO saved_builds
-          (user_id, title, total_price, budget, compatible, performance_score, parts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, title, total_price, budget, compatible, performance_score, parts, created_at`,
-        [
-          req.session.userId,
-          title,
-          totalPrice,
-          budget,
-          compatible,
-          performanceScore,
-          JSON.stringify(parts),
-        ]
-      );
+    const requestedParts = Object.values(parts).filter((part) => part && typeof part === "object");
 
-      return res.json({ ok: true, build: normalizeSavedBuildRow(rows[0]) });
+    if (requestedParts.length === 0) {
+      return res.status(400).json({ ok: false, error: "at least one part is required" });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const buildResult = await client.query(
+        `INSERT INTO builds (uid, price, validated)
+         VALUES ($1, $2, $3)
+         RETURNING build_id, uid, price, validated`,
+        [req.session.userId, totalPrice, compatible]
+      );
+      const build = buildResult.rows[0];
+      const partRows = [];
+
+      for (const part of requestedParts) {
+        let partResult;
+
+        if (Number.isInteger(Number(part.sku)) && Number(part.sku) > 0) {
+          partResult = await client.query(
+            `SELECT sku, type, price, name, inventory
+               FROM pc_parts
+              WHERE sku = $1`,
+            [Number(part.sku)]
+          );
+        } else if (typeof part.name === "string" && part.name.trim()) {
+          partResult = await client.query(
+            `SELECT sku, type, price, name, inventory
+               FROM pc_parts
+              WHERE name = $1`,
+            [part.name.trim()]
+          );
+        } else {
+          continue;
+        }
+
+        if (partResult.rows.length === 0) {
+          continue;
+        }
+
+        const matchedPart = partResult.rows[0];
+        partRows.push(matchedPart);
+
+        await client.query(
+          `INSERT INTO build_pc_parts (build_id, sku)
+           VALUES ($1, $2)`,
+          [build.build_id, matchedPart.sku]
+        );
+      }
+
+      if (partRows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          ok: false,
+          error: "parts must reference existing pc_parts rows",
+        });
+      }
+
+      await client.query("COMMIT");
+
+      return res.json({ ok: true, build: buildSavedBuildResponse(build, partRows) });
     } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
       console.error(error);
       return res.status(500).json({ ok: false, error: "Server error" });
+    } finally {
+      client.release();
     }
   });
 
   app.get("/builds/mine", requireAuth, async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, title, total_price, budget, compatible, performance_score, parts, created_at
-           FROM saved_builds
-          WHERE user_id = $1
-          ORDER BY created_at DESC`,
+        `SELECT
+           b.build_id,
+           b.uid,
+           b.price,
+           b.validated,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'sku', p.sku,
+                 'type', p.type,
+                 'price', p.price,
+                 'name', p.name,
+                 'inventory', p.inventory
+               )
+               ORDER BY bp.junction_id
+             ) FILTER (WHERE p.sku IS NOT NULL),
+             '[]'::json
+           ) AS part_rows
+         FROM builds b
+         LEFT JOIN build_pc_parts bp ON bp.build_id = b.build_id
+         LEFT JOIN pc_parts p ON p.sku = bp.sku
+         WHERE b.uid = $1
+         GROUP BY b.build_id, b.uid, b.price, b.validated
+         ORDER BY b.build_id DESC`,
         [req.session.userId]
       );
 
@@ -631,8 +732,8 @@ export function createApp({
 
     try {
       const { rowCount } = await pool.query(
-        `DELETE FROM saved_builds
-          WHERE id = $1 AND user_id = $2`,
+        `DELETE FROM builds
+          WHERE build_id = $1 AND uid = $2`,
         [buildId, req.session.userId]
       );
 
@@ -693,7 +794,7 @@ export function createApp({
 
       await client.query("COMMIT");
 
-      req.session.userId = user.uid;
+      req.session.userId = Number(user.uid);
 
       await safeLogAuthEvent({
         userId: user.uid,
@@ -707,7 +808,7 @@ export function createApp({
       return res.json({
         ok: true,
         user: {
-          id: user.uid,
+          id: Number(user.uid),
           email: user.email,
         },
       });
@@ -828,7 +929,7 @@ export function createApp({
         return res.status(401).json({ ok: false, error: "Invalid credentials" });
       }
 
-      req.session.userId = user.uid;
+      req.session.userId = Number(user.uid);
 
       await safeLogAuthEvent({
         userId: user.uid,
@@ -842,7 +943,7 @@ export function createApp({
       return res.json({
         ok: true,
         user: {
-          id: user.uid,
+          id: Number(user.uid),
           email: user.email,
         },
       });
@@ -871,7 +972,7 @@ export function createApp({
       return res.json({
         ok: true,
         user: {
-          id: rows[0].uid,
+          id: Number(rows[0].uid),
           email: rows[0].email,
         },
       });

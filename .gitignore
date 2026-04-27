@@ -1,4 +1,5 @@
 .idea/
+/scripts
 
 # Local environment files
 **/.env

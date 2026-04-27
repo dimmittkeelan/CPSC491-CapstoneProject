@@ -1,93 +1,17 @@
 import request from "supertest";
 import session from "express-session";
-import { createApp } from "../server.js";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "@jest/globals";
+import { createApp, createAuthLogger } from "../server.js";
+import {
+  applyIntegrationSchema,
+  createIntegrationPool,
+  truncateIntegrationTables,
+} from "./helpers/integrationTestDb.js";
 
-function createInMemoryUserPool() {
-  const usersByEmail = new Map();
-  const usersById = new Map();
-  const authByUid = new Map();
-  let nextUid = 1;
-  let nextAuthId = 1;
-
-  async function handleQuery(text, params = []) {
-    const trimmed = text.trim();
-
-    if (trimmed === "BEGIN" || trimmed === "COMMIT" || trimmed === "ROLLBACK") {
-      return { rows: [] };
-    }
-
-    if (trimmed.startsWith("INSERT INTO users")) {
-      const [username, email] = params;
-      if (usersByEmail.has(email)) {
-        const err = new Error("duplicate key value violates unique constraint");
-        err.code = "23505";
-        throw err;
-      }
-      const uid = nextUid++;
-      const user = { uid, username, email };
-      usersByEmail.set(email, user);
-      usersById.set(uid, user);
-      return { rows: [{ uid: user.uid, username: user.username, email: user.email }] };
-    }
-
-    if (trimmed.startsWith("INSERT INTO auth")) {
-      const [uid, passwordHash] = params;
-      const auth_id = nextAuthId++;
-      authByUid.set(uid, { auth_id, uid, password_hash: passwordHash, account_lock: false, two_fa: false });
-      return { rows: [{ auth_id }] };
-    }
-
-    if (trimmed.includes("FROM users u") && trimmed.includes("JOIN auth a")) {
-      const [email] = params;
-      const user = usersByEmail.get(email);
-      if (!user) return { rows: [] };
-      const auth = authByUid.get(user.uid);
-      if (!auth) return { rows: [] };
-      return {
-        rows: [{
-          uid: user.uid,
-          username: user.username,
-          email: user.email,
-          auth_id: auth.auth_id,
-          password_hash: auth.password_hash,
-          account_lock: auth.account_lock,
-          two_fa: auth.two_fa,
-        }],
-      };
-    }
-
-    if (trimmed.startsWith("SELECT uid, email FROM users WHERE uid = $1")) {
-      const [uid] = params;
-      const user = usersById.get(uid);
-      if (!user) return { rows: [] };
-      return { rows: [{ uid: user.uid, email: user.email }] };
-    }
-
-    if (trimmed.startsWith("SELECT 1 as ok")) {
-      return { rows: [{ ok: 1 }] };
-    }
-
-    throw new Error(`Unexpected query in test pool: ${text}`);
-  }
-
-  return {
-    async query(text, params = []) {
-      return handleQuery(text, params);
-    },
-    async connect() {
-      return {
-        async query(text, params = []) {
-          return handleQuery(text, params);
-        },
-        release() {},
-      };
-    },
-  };
-}
-
-function createTestAgent() {
+function createTestAgent(pool) {
   const app = createApp({
-    pool: createInMemoryUserPool(),
+    pool,
+    authLogger: createAuthLogger(pool),
     sessionSecret: "test-secret",
     sessionStore: new session.MemoryStore(),
   });
@@ -96,9 +20,25 @@ function createTestAgent() {
 }
 
 describe("Auth contract", () => {
-  test("POST /auth/register returns 400 and contract error for missing fields", async () => {
-    const agent = createTestAgent();
+  let pool;
+  let agent;
 
+  beforeAll(async () => {
+    process.env.NODE_ENV = "test";
+    pool = createIntegrationPool();
+    await applyIntegrationSchema(pool);
+  });
+
+  beforeEach(async () => {
+    await truncateIntegrationTables(pool);
+    agent = createTestAgent(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  test("POST /auth/register returns 400 and contract error for missing fields", async () => {
     const res = await agent.post("/auth/register").send({ email: "" });
 
     expect(res.status).toBe(400);
@@ -106,8 +46,6 @@ describe("Auth contract", () => {
   });
 
   test("POST /auth/register returns 200 with { ok, user } and creates session", async () => {
-    const agent = createTestAgent();
-
     const register = await agent.post("/auth/register").send({
       email: "TeSt@Example.com",
       password: "1234567890",
@@ -129,8 +67,6 @@ describe("Auth contract", () => {
   });
 
   test("POST /auth/login returns 401 with contract error on invalid credentials", async () => {
-    const agent = createTestAgent();
-
     await agent.post("/auth/register").send({
       email: "test@example.com",
       password: "1234567890",
@@ -148,8 +84,6 @@ describe("Auth contract", () => {
   });
 
   test("POST /auth/login returns 200 with { ok, user } for valid credentials", async () => {
-    const agent = createTestAgent();
-
     await agent.post("/auth/register").send({
       email: "user@example.com",
       password: "1234567890",
@@ -170,8 +104,6 @@ describe("Auth contract", () => {
   });
 
   test("GET /auth/me returns 401 and contract error when not logged in", async () => {
-    const agent = createTestAgent();
-
     const res = await agent.get("/auth/me");
 
     expect(res.status).toBe(401);
@@ -179,8 +111,6 @@ describe("Auth contract", () => {
   });
 
   test("POST /auth/logout returns 200 with { ok: true }", async () => {
-    const agent = createTestAgent();
-
     await agent.post("/auth/register").send({
       email: "logout@example.com",
       password: "1234567890",

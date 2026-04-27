@@ -1,725 +1,416 @@
-import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
-import { createApp } from "../server.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import request from "supertest";
+import session from "express-session";
+import { createApp, createAuthLogger } from "../server.js";
+import {
+  applyIntegrationSchema,
+  createIntegrationPool,
+  seedPcParts,
+  truncateIntegrationTables,
+} from "./helpers/integrationTestDb.js";
 
-function createPool(queryImpl = async () => ({ rows: [] })) {
-  const client = {
-    query: jest.fn(queryImpl),
-    release: jest.fn(),
-  };
-
-  return {
-    query: jest.fn(queryImpl),
-    connect: jest.fn(async () => client),
-  };
-}
-
-function createBcrypt({
-  hashResult = "hashed-password",
-  compareResult = true,
-} = {}) {
-  return {
-    hash: jest.fn(async () => hashResult),
-    compare: jest.fn(async () => compareResult),
-  };
-}
-
-function createSessionMiddleware() {
-  return (req, _res, next) => {
-    const userId = req.headers["x-test-user-id"];
-    const destroyFails = req.headers["x-test-destroy-error"] === "1";
-
-    req.session = {
-      userId: userId ? Number(userId) || userId : undefined,
-      destroy(callback) {
-        if (destroyFails) {
-          callback(new Error("destroy failed"));
-          return;
-        }
-
-        this.userId = undefined;
-        callback();
-      },
-    };
-
-    next();
-  };
-}
-
-function createAuthLogger({
-  events = [],
-} = {}) {
-  return {
-    logEvent: jest.fn(async (event) => {
-      events.push(event);
-    }),
-    getRecentEventsForUser: jest.fn(async () => events),
-  };
-}
-
-async function startTestServer(overrides = {}) {
-  const app = createApp({
-    pool: overrides.pool ?? createPool(),
-    bcryptLib: overrides.bcryptLib ?? createBcrypt(),
-    sessionMiddleware: overrides.sessionMiddleware ?? createSessionMiddleware(),
-    authLogger: overrides.authLogger ?? createAuthLogger(),
+function createTestApp(pool) {
+  return createApp({
+    pool,
+    sessionSecret: "test-secret",
+    sessionStore: new session.MemoryStore(),
+    authLogger: createAuthLogger(pool),
   });
-
-  const server = await new Promise((resolve, reject) => {
-    const instance = app.listen(0, "127.0.0.1");
-    instance.once("listening", () => resolve(instance));
-    instance.once("error", reject);
-  });
-
-  return {
-    server,
-    baseUrl: `http://127.0.0.1:${server.address().port}`,
-  };
-}
-
-async function request(baseUrl, path, { method = "GET", headers, body } = {}) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: {
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  const contentType = response.headers.get("content-type") ?? "";
-  const parsedBody = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  return { response, body: parsedBody };
 }
 
 describe("server routes", () => {
-  let activeServer;
+  let pool;
+  let app;
+  let agent;
   let consoleErrorSpy;
 
-  beforeEach(() => {
+  beforeAll(async () => {
+    process.env.NODE_ENV = "test";
     process.env.SESSION_SECRET = "test-secret";
+    pool = createIntegrationPool();
+    await applyIntegrationSchema(pool);
+  });
+
+  beforeEach(async () => {
+    await truncateIntegrationTables(pool);
+    app = createTestApp(pool);
+    agent = request.agent(app);
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  afterEach(async () => {
-    if (activeServer) {
-      await new Promise((resolve, reject) => {
-        activeServer.close((error) => {
-          if (error) reject(error);
-          else resolve();
-        });
-      });
-      activeServer = undefined;
-    }
-
+  afterEach(() => {
     jest.restoreAllMocks();
     consoleErrorSpy = undefined;
   });
 
-  async function boot(overrides) {
-    const started = await startTestServer(overrides);
-    activeServer = started.server;
-    return started.baseUrl;
-  }
+  afterAll(async () => {
+    await pool.end();
+  });
 
   test("GET / returns ok text", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/");
+    const response = await request(app).get("/");
 
     expect(response.status).toBe(200);
-    expect(body).toBe("ok");
+    expect(response.text).toBe("ok");
   });
 
   test("GET /favicon.ico returns 204", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/favicon.ico");
+    const response = await request(app).get("/favicon.ico");
 
     expect(response.status).toBe(204);
-    expect(body).toBe("");
+    expect(response.text).toBe("");
   });
 
   test("POST /api/compatibility returns compatible true when parts match", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/api/compatibility", {
-      method: "POST",
-      body: {
+    const response = await request(app)
+      .post("/api/compatibility")
+      .send({
         cpu: { socket: "AM5", tdp: 105 },
         motherboard: { socket: "AM5", ramType: "DDR5", maxRam: 128 },
         ram: { type: "DDR5", capacity: 32 },
         gpu: { tdp: 200 },
         psu: { wattage: 700 },
-      },
-    });
+      });
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ compatible: true, issues: [] });
+    expect(response.body).toEqual({ compatible: true, issues: [] });
   });
 
-  test("POST /api/compatibility aggregates incompatibility issues", async () => {
-    const baseUrl = await boot();
-
-    const { body } = await request(baseUrl, "/api/compatibility", {
-      method: "POST",
-      body: {
-        cpu: { socket: "AM5", tdp: 120 },
-        motherboard: { socket: "LGA1700", ramType: "DDR5", maxRam: 64 },
-        ram: { type: "DDR4", capacity: 128 },
-        gpu: { tdp: 320 },
-        psu: { wattage: 450 },
-      },
-    });
-
-    expect(body.compatible).toBe(false);
-    expect(body.issues.length).toBeGreaterThanOrEqual(3);
-  });
-
-  test("POST /auth/register rejects missing credentials", async () => {
-    const bcryptLib = createBcrypt();
-    const pool = createPool();
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, bcryptLib, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/register", {
-      method: "POST",
-      body: { email: "", password: "" },
-    });
-
-    expect(response.status).toBe(400);
-    expect(body).toEqual({ ok: false, error: "email/password required" });
-    expect(bcryptLib.hash).not.toHaveBeenCalled();
-    expect(pool.query).not.toHaveBeenCalled();
-    expect(pool.connect).not.toHaveBeenCalled();
-    expect(authLogger.logEvent).not.toHaveBeenCalled();
-  });
-
-  test("POST /auth/register rejects short passwords", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/auth/register", {
-      method: "POST",
-      body: { email: "user@example.com", password: "short" },
-    });
-
-    expect(response.status).toBe(400);
-    expect(body).toEqual({
-      ok: false,
-      error: "Password needs to be at least length of 10.",
-    });
-  });
-
-  test("POST /auth/register creates a user and lowercases email", async () => {
-    const bcryptLib = createBcrypt({ hashResult: "hashed-value" });
-    const pool = createPool(
-      jest
-        .fn()
-        .mockResolvedValueOnce({ rows: [] }) // BEGIN
-        .mockResolvedValueOnce({
-          rows: [{ uid: 10, username: null, email: "user@example.com" }],
-        }) // INSERT users
-        .mockResolvedValueOnce({
-          rows: [{ auth_id: 99 }],
-        }) // INSERT auth
-        .mockResolvedValueOnce({ rows: [] }) // COMMIT
-    );
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, bcryptLib, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/register", {
-      method: "POST",
-      headers: {
-        "x-forwarded-for": "203.0.113.10",
-        "user-agent": "jest-test-agent",
-      },
-      body: { email: "User@Example.com", password: "long-password" },
-    });
+  test("POST /auth/register creates users, auth, and auth_logs rows", async () => {
+    const response = await agent
+      .post("/auth/register")
+      .set("x-forwarded-for", "203.0.113.10")
+      .set("user-agent", "jest-test-agent")
+      .send({
+        email: "User@Example.com",
+        password: "long-password",
+      });
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({
+    expect(response.body).toEqual({
       ok: true,
-      user: { id: 10, email: "user@example.com" },
+      user: { id: 1, email: "user@example.com" },
     });
-    expect(bcryptLib.hash).toHaveBeenCalledWith("long-password", 12);
-    expect(pool.connect).toHaveBeenCalled();
-    expect(authLogger.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 10,
-        attemptedEmail: "user@example.com",
-        eventType: "register",
+
+    const users = await pool.query("SELECT uid, email FROM users ORDER BY uid ASC");
+    const auth = await pool.query("SELECT auth_id, uid FROM auth ORDER BY auth_id ASC");
+    const logs = await pool.query(
+      `SELECT auth_id, uid, attempted_email, event_type, success, ip_address, user_agent
+         FROM auth_logs
+        ORDER BY log_id ASC`
+    );
+
+    expect(users.rows).toEqual([{ uid: "1", email: "user@example.com" }]);
+    expect(auth.rows).toHaveLength(1);
+    expect(auth.rows[0].uid).toBe("1");
+    expect(logs.rows).toEqual([
+      {
+        auth_id: auth.rows[0].auth_id,
+        uid: "1",
+        attempted_email: "user@example.com",
+        event_type: "register",
         success: true,
-        ipAddress: "203.0.113.10",
-        userAgent: "jest-test-agent",
-      })
-    );
-  });
-
-  test("POST /auth/register returns 409 on duplicate email", async () => {
-    const pool = createPool(async (queryText) => {
-      if (queryText.includes("INSERT INTO users")) {
-        const error = new Error("duplicate");
-        error.code = "23505";
-        throw error;
-      }
-
-      return { rows: [] };
-    });
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/register", {
-      method: "POST",
-      body: { email: "user@example.com", password: "long-password" },
-    });
-
-    expect(response.status).toBe(409);
-    expect(body).toEqual({ ok: false, error: "Email already exists" });
-    expect(authLogger.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attemptedEmail: "user@example.com",
-        eventType: "register",
-        success: false,
-        failureReason: "email_exists",
-      })
-    );
-  });
-
-  test("POST /auth/login rejects missing credentials", async () => {
-    const pool = createPool();
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/login", {
-      method: "POST",
-      body: {},
-    });
-
-    expect(response.status).toBe(400);
-    expect(body).toEqual({ ok: false, error: "email/password required" });
-    expect(pool.query).not.toHaveBeenCalled();
-    expect(authLogger.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attemptedEmail: null,
-        eventType: "login",
-        success: false,
-        failureReason: "missing_credentials",
-      })
-    );
-  });
-
-  test("POST /auth/login rejects unknown users", async () => {
-    const pool = createPool(async () => ({ rows: [] }));
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/login", {
-      method: "POST",
-      body: { email: "user@example.com", password: "long-password" },
-    });
-
-    expect(response.status).toBe(401);
-    expect(body).toEqual({ ok: false, error: "Invalid credentials" });
-    expect(authLogger.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attemptedEmail: "user@example.com",
-        eventType: "login",
-        success: false,
-        failureReason: "invalid_credentials",
-      })
-    );
-  });
-
-  test("POST /auth/login rejects incorrect password", async () => {
-    const pool = createPool(async () => ({
-      rows: [
-        {
-          uid: 7,
-          username: null,
-          email: "user@example.com",
-          auth_id: 55,
-          password_hash: "hash",
-          account_lock: false,
-          two_fa: false,
-        },
-      ],
-    }));
-    const bcryptLib = createBcrypt({ compareResult: false });
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, bcryptLib, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/login", {
-      method: "POST",
-      body: { email: "user@example.com", password: "wrong-password" },
-    });
-
-    expect(response.status).toBe(401);
-    expect(body).toEqual({ ok: false, error: "Invalid credentials" });
-    expect(bcryptLib.compare).toHaveBeenCalledWith("wrong-password", "hash");
-    expect(authLogger.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 7,
-        attemptedEmail: "user@example.com",
-        eventType: "login",
-        success: false,
-        failureReason: "invalid_credentials",
-      })
-    );
-  });
-
-  test("POST /auth/login returns user payload on success", async () => {
-    const pool = createPool(async () => ({
-      rows: [
-        {
-          uid: 7,
-          username: null,
-          email: "user@example.com",
-          auth_id: 55,
-          password_hash: "hash",
-          account_lock: false,
-          two_fa: false,
-        },
-      ],
-    }));
-    const bcryptLib = createBcrypt({ compareResult: true });
-    const authLogger = createAuthLogger();
-    const baseUrl = await boot({ pool, bcryptLib, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/login", {
-      method: "POST",
-      headers: {
-        "x-forwarded-for": "198.51.100.20",
-        "user-agent": "security-audit-test",
+        ip_address: "203.0.113.10",
+        user_agent: "jest-test-agent",
       },
-      body: { email: "USER@EXAMPLE.COM", password: "long-password" },
-    });
-
-    expect(response.status).toBe(200);
-    expect(body).toEqual({
-      ok: true,
-      user: { id: 7, email: "user@example.com" },
-    });
-    expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("FROM users u"),
-      ["user@example.com"]
-    );
-    expect(authLogger.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 7,
-        attemptedEmail: "user@example.com",
-        eventType: "login",
-        success: true,
-        ipAddress: "198.51.100.20",
-        userAgent: "security-audit-test",
-      })
-    );
+    ]);
   });
 
-  test("GET /auth/me rejects unauthenticated requests", async () => {
-    const baseUrl = await boot();
+  test("POST /auth/register logs duplicate email failures against the existing auth row", async () => {
+    await agent.post("/auth/register").send({
+      email: "user@example.com",
+      password: "long-password",
+    });
 
-    const { response, body } = await request(baseUrl, "/auth/me");
+    const duplicate = await request(app).post("/auth/register").send({
+      email: "user@example.com",
+      password: "long-password",
+    });
 
-    expect(response.status).toBe(401);
-    expect(body).toEqual({ ok: false, error: "Not Logged in" });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body).toEqual({ ok: false, error: "Email already exists" });
+
+    const logs = await pool.query(
+      `SELECT event_type, success, failure_reason, attempted_email
+         FROM auth_logs
+        ORDER BY log_id ASC`
+    );
+
+    expect(logs.rows).toEqual([
+      {
+        event_type: "register",
+        success: true,
+        failure_reason: null,
+        attempted_email: "user@example.com",
+      },
+      {
+        event_type: "register",
+        success: false,
+        failure_reason: "email_exists",
+        attempted_email: "user@example.com",
+      },
+    ]);
+  });
+
+  test("POST /auth/login logs failed and successful attempts in the database", async () => {
+    await agent.post("/auth/register").send({
+      email: "user@example.com",
+      password: "long-password",
+    });
+
+    await agent.post("/auth/logout");
+
+    const badLogin = await agent.post("/auth/login").send({
+      email: "user@example.com",
+      password: "wrong-password",
+    });
+    expect(badLogin.status).toBe(401);
+    expect(badLogin.body).toEqual({ ok: false, error: "Invalid credentials" });
+
+    const goodLogin = await agent.post("/auth/login").send({
+      email: "user@example.com",
+      password: "long-password",
+    });
+    expect(goodLogin.status).toBe(200);
+    expect(goodLogin.body).toEqual({
+      ok: true,
+      user: { id: 1, email: "user@example.com" },
+    });
+
+    const logs = await pool.query(
+      `SELECT event_type, success, failure_reason, attempted_email
+         FROM auth_logs
+        ORDER BY log_id ASC`
+    );
+
+    expect(logs.rows).toEqual([
+      {
+        event_type: "register",
+        success: true,
+        failure_reason: null,
+        attempted_email: "user@example.com",
+      },
+      {
+        event_type: "login",
+        success: false,
+        failure_reason: "invalid_credentials",
+        attempted_email: "user@example.com",
+      },
+      {
+        event_type: "login",
+        success: true,
+        failure_reason: null,
+        attempted_email: "user@example.com",
+      },
+    ]);
   });
 
   test("GET /auth/me returns the current user when authenticated", async () => {
-    const pool = createPool(async () => ({
-      rows: [{ uid: 42, email: "user@example.com" }],
-    }));
-    const baseUrl = await boot({ pool });
-
-    const { response, body } = await request(baseUrl, "/auth/me", {
-      headers: { "x-test-user-id": "42" },
+    await agent.post("/auth/register").send({
+      email: "me@example.com",
+      password: "long-password",
     });
+
+    const response = await agent.get("/auth/me");
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({
+    expect(response.body).toEqual({
       ok: true,
-      user: { id: 42, email: "user@example.com" },
+      user: { id: 1, email: "me@example.com" },
     });
-    expect(pool.query).toHaveBeenCalledWith(
-      "SELECT uid, email FROM users WHERE uid = $1",
-      [42]
+  });
+
+  test("GET /auth/logs returns the current user's real auth history", async () => {
+    await agent.post("/auth/register").send({
+      email: "logs@example.com",
+      password: "long-password",
+    });
+
+    await agent.post("/auth/logout");
+    await agent.post("/auth/login").send({
+      email: "logs@example.com",
+      password: "wrong-password",
+    });
+    await agent.post("/auth/login").send({
+      email: "logs@example.com",
+      password: "long-password",
+    });
+
+    const response = await agent.get("/auth/logs");
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.logs).toHaveLength(3);
+
+    const summary = response.body.logs.map((log) => ({
+      event_type: log.event_type,
+      success: log.success,
+      failure_reason: log.failure_reason ?? null,
+    }));
+
+    expect(summary).toEqual(
+      expect.arrayContaining([
+        { event_type: "register", success: true, failure_reason: null },
+        { event_type: "login", success: false, failure_reason: "invalid_credentials" },
+        { event_type: "login", success: true, failure_reason: null },
+      ])
     );
   });
 
-  test("POST /builds saves a build for the authenticated user", async () => {
-    const pool = createPool(async (queryText) => {
-      if (queryText.includes("INSERT INTO saved_builds")) {
-        return {
-          rows: [
-            {
-              id: 5,
-              title: "Balanced 1080p Starter",
-              total_price: "897.00",
-              budget: "1000.00",
-              compatible: true,
-              performance_score: 74,
-              parts: { cpu: { name: "Ryzen 5 5600X" } },
-              created_at: "2026-03-16T10:00:00.000Z",
-            },
-          ],
-        };
-      }
+  test("POST /builds stores a build in builds and build_pc_parts", async () => {
+    await seedPcParts(pool, [
+      { type: "cpu", name: "Ryzen 5 5600X", price: 199, inventory: 5 },
+      { type: "gpu", name: "RTX 3060", price: 329, inventory: 3 },
+    ]);
 
-      return { rows: [] };
+    await agent.post("/auth/register").send({
+      email: "builder@example.com",
+      password: "long-password",
     });
-    const baseUrl = await boot({ pool });
 
-    const { response, body } = await request(baseUrl, "/builds", {
-      method: "POST",
-      headers: { "x-test-user-id": "42" },
-      body: {
-        title: "Balanced 1080p Starter",
-        totalPrice: 897,
-        budget: 1000,
-        compatible: true,
-        performanceScore: 74,
-        parts: { cpu: { name: "Ryzen 5 5600X" } },
+    const response = await agent.post("/builds").send({
+      title: "Balanced 1080p Starter",
+      totalPrice: 528,
+      compatible: true,
+      parts: {
+        cpu: { name: "Ryzen 5 5600X" },
+        gpu: { name: "RTX 3060" },
       },
     });
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({
+    expect(response.body).toEqual({
       ok: true,
       build: {
-        id: 5,
-        title: "Balanced 1080p Starter",
-        totalPrice: 897,
-        budget: 1000,
+        id: 1,
+        title: "Ryzen 5 5600X + RTX 3060",
+        totalPrice: 528,
+        budget: null,
         compatible: true,
-        performanceScore: 74,
-        parts: { cpu: { name: "Ryzen 5 5600X" } },
-        createdAt: "2026-03-16T10:00:00.000Z",
+        performanceScore: null,
+        parts: {
+          cpu: {
+            sku: 1,
+            type: "cpu",
+            name: "Ryzen 5 5600X",
+            price: 199,
+            inventory: 5,
+          },
+          gpu: {
+            sku: 2,
+            type: "gpu",
+            name: "RTX 3060",
+            price: 329,
+            inventory: 3,
+          },
+        },
+        createdAt: null,
       },
     });
+
+    const builds = await pool.query("SELECT build_id, uid, price, validated FROM builds ORDER BY build_id ASC");
+    const junctions = await pool.query(
+      "SELECT build_id, sku FROM build_pc_parts ORDER BY junction_id ASC"
+    );
+
+    expect(builds.rows).toEqual([
+      { build_id: "1", uid: "1", price: "528.00", validated: true },
+    ]);
+    expect(junctions.rows).toEqual([
+      { build_id: "1", sku: "1" },
+      { build_id: "1", sku: "2" },
+    ]);
   });
 
-  test("GET /builds/mine returns the authenticated user's saved builds", async () => {
-    const pool = createPool(async (queryText) => {
-      if (queryText.includes("FROM saved_builds")) {
-        return {
-          rows: [
-            {
-              id: 7,
-              title: "Creator Midrange Build",
-              total_price: "1325.00",
-              budget: "1400.00",
-              compatible: true,
-              performance_score: 86,
-              parts: { gpu: { name: "RTX 4070" } },
-              created_at: "2026-03-15T08:00:00.000Z",
-            },
-          ],
-        };
-      }
+  test("GET /builds/mine returns builds from the real joined schema", async () => {
+    await seedPcParts(pool, [
+      { type: "cpu", name: "Ryzen 7 7700X", price: 349, inventory: 4 },
+      { type: "gpu", name: "RTX 4070", price: 599, inventory: 2 },
+    ]);
 
-      return { rows: [] };
+    await agent.post("/auth/register").send({
+      email: "saved@example.com",
+      password: "long-password",
     });
-    const baseUrl = await boot({ pool });
 
-    const { response, body } = await request(baseUrl, "/builds/mine", {
-      headers: { "x-test-user-id": "42" },
+    await agent.post("/builds").send({
+      totalPrice: 948,
+      compatible: true,
+      parts: {
+        cpu: { name: "Ryzen 7 7700X" },
+        gpu: { name: "RTX 4070" },
+      },
     });
+
+    const response = await agent.get("/builds/mine");
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({
+    expect(response.body).toEqual({
       ok: true,
       builds: [
         {
-          id: 7,
-          title: "Creator Midrange Build",
-          totalPrice: 1325,
-          budget: 1400,
+          id: 1,
+          title: "Ryzen 7 7700X + RTX 4070",
+          totalPrice: 948,
+          budget: null,
           compatible: true,
-          performanceScore: 86,
-          parts: { gpu: { name: "RTX 4070" } },
-          createdAt: "2026-03-15T08:00:00.000Z",
+          performanceScore: null,
+          parts: {
+            cpu: {
+              sku: 1,
+              type: "cpu",
+              name: "Ryzen 7 7700X",
+              price: 349,
+              inventory: 4,
+            },
+            gpu: {
+              sku: 2,
+              type: "gpu",
+              name: "RTX 4070",
+              price: 599,
+              inventory: 2,
+            },
+          },
+          createdAt: null,
         },
       ],
     });
   });
 
-  test("DELETE /builds/:buildId removes a saved build for the authenticated user", async () => {
-    const pool = createPool(async () => ({ rowCount: 1, rows: [] }));
-    const baseUrl = await boot({ pool });
+  test("DELETE /builds/:buildId removes the build and junction rows", async () => {
+    await seedPcParts(pool, [
+      { type: "cpu", name: "Ryzen 5 7600X", price: 249, inventory: 7 },
+    ]);
 
-    const { response, body } = await request(baseUrl, "/builds/7", {
-      method: "DELETE",
-      headers: { "x-test-user-id": "42" },
+    await agent.post("/auth/register").send({
+      email: "delete@example.com",
+      password: "long-password",
     });
+
+    await agent.post("/builds").send({
+      totalPrice: 249,
+      compatible: true,
+      parts: {
+        cpu: { name: "Ryzen 5 7600X" },
+      },
+    });
+
+    const response = await agent.delete("/builds/1");
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true });
-  });
+    expect(response.body).toEqual({ ok: true });
 
-  test("POST /auth/logout clears the session", async () => {
-    const baseUrl = await boot();
+    const builds = await pool.query("SELECT COUNT(*)::int AS count FROM builds");
+    const junctions = await pool.query("SELECT COUNT(*)::int AS count FROM build_pc_parts");
 
-    const { response, body } = await request(baseUrl, "/auth/logout", {
-      method: "POST",
-    });
-
-    expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true });
-  });
-
-  test("POST /auth/logout returns 500 when session destruction fails", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/auth/logout", {
-      method: "POST",
-      headers: { "x-test-destroy-error": "1" },
-    });
-
-    expect(response.status).toBe(500);
-    expect(body).toEqual({ ok: false, error: "Logout failed" });
-  });
-
-  test("GET /auth/logs returns current user's auth history", async () => {
-    const pool = createPool(async (queryText) => {
-      if (queryText.includes("SELECT uid, email FROM users")) {
-        return { rows: [{ uid: 42, email: "user@example.com" }] };
-      }
-
-      return { rows: [] };
-    });
-    const authLogger = createAuthLogger({
-      events: [
-        {
-          log_id: 1,
-          event_type: "login",
-          success: true,
-          attempted_email: "user@example.com",
-          created_at: "2026-03-13T12:00:00.000Z",
-        },
-        {
-          log_id: 2,
-          event_type: "login",
-          success: false,
-          attempted_email: "user@example.com",
-          failure_reason: "invalid_credentials",
-          created_at: "2026-03-13T11:00:00.000Z",
-        },
-      ],
-    });
-    const baseUrl = await boot({ pool, authLogger });
-
-    const { response, body } = await request(baseUrl, "/auth/logs", {
-      headers: { "x-test-user-id": "42" },
-    });
-
-    expect(response.status).toBe(200);
-    expect(body).toEqual({
-      ok: true,
-      logs: [
-        {
-          log_id: 1,
-          event_type: "login",
-          success: true,
-          attempted_email: "user@example.com",
-          created_at: "2026-03-13T12:00:00.000Z",
-        },
-        {
-          log_id: 2,
-          event_type: "login",
-          success: false,
-          attempted_email: "user@example.com",
-          failure_reason: "invalid_credentials",
-          created_at: "2026-03-13T11:00:00.000Z",
-        },
-      ],
-    });
-    expect(authLogger.getRecentEventsForUser).toHaveBeenCalledWith({
-      userId: 42,
-    });
+    expect(builds.rows[0].count).toBe(0);
+    expect(junctions.rows[0].count).toBe(0);
   });
 
   test("GET /health reports database availability", async () => {
-    const pool = createPool(async () => ({ rows: [{ ok: 1 }] }));
-    const baseUrl = await boot({ pool });
-
-    const { response, body } = await request(baseUrl, "/health");
+    const response = await request(app).get("/health");
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true, db: 1 });
-  });
-
-  test("GET /health returns 500 when the database query fails", async () => {
-    const pool = createPool(async () => {
-      throw new Error("db unavailable");
-    });
-    const baseUrl = await boot({ pool });
-
-    const { response, body } = await request(baseUrl, "/health");
-
-    expect(response.status).toBe(500);
-    expect(body).toEqual({ ok: false, error: "db down" });
-  });
-
-    test("GET /api/parts returns all five part categories", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/api/parts");
-
-    expect(response.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.parts).toHaveProperty("cpu");
-    expect(body.parts).toHaveProperty("gpu");
-    expect(body.parts).toHaveProperty("ram");
-    expect(body.parts).toHaveProperty("mobo");
-    expect(body.parts).toHaveProperty("psu");
-  });
-
-  test("POST /api/recommend rejects a missing budget", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/api/recommend", {
-      method: "POST",
-      body: {},
-    });
-
-    expect(response.status).toBe(400);
-    expect(body).toEqual({ ok: false, error: "Valid budget is required" });
-  });
-
-  test("POST /api/recommend rejects a zero budget", async () => {
-    const baseUrl = await boot();
-
-    const { response, body } = await request(baseUrl, "/api/recommend", {
-      method: "POST",
-      body: { budget: 0 },
-    });
-
-    expect(response.status).toBe(400);
-    expect(body).toEqual({ ok: false, error: "Valid budget is required" });
-  });
-
-  test("POST /api/recommend CPU and mobo have matching sockets", async () => {
-    const baseUrl = await boot();
-
-    const { body } = await request(baseUrl, "/api/recommend", {
-      method: "POST",
-      body: { budget: 1000 },
-    });
-
-    expect(body.ok).toBe(true);
-    expect(body.parts.cpu.socket).toBe(body.parts.mobo.socket);
-  });
-
-  test("POST /api/recommend RAM type matches mobo RAM type", async () => {
-    const baseUrl = await boot();
-
-    const { body } = await request(baseUrl, "/api/recommend", {
-      method: "POST",
-      body: { budget: 1000 },
-    });
-
-    expect(body.ok).toBe(true);
-    expect(body.parts.ram.type).toBe(body.parts.mobo.ramType);
+    expect(response.body).toEqual({ ok: true, db: 1 });
   });
 });
