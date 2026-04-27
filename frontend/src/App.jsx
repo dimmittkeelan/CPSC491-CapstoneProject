@@ -13,6 +13,9 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
 
 export default function App() {
+  const reportIssueHref =
+    "mailto:pcpartgeneratorsupport@gmail.com?subject=PC%20Build%20Generator%20Issue&body=Please%20describe%20what%20happened%2C%20what%20you%20expected%2C%20and%20how%20to%20reproduce%20it.";
+
   return (
     <BrowserRouter>
       <UxErrorBoundary>
@@ -34,6 +37,12 @@ export default function App() {
               </Routes>
             </BuildProvider>
           </main>
+
+          <footer className="app-report-footer" aria-label="Report an issue">
+            <a className="app-report-footer__button" href={reportIssueHref}>
+              Report an Issue
+            </a>
+          </footer>
         </div>
       </UxErrorBoundary>
     </BrowserRouter>

@@ -13,6 +13,36 @@
   flex: 1;
 }
 
+.app-report-footer {
+  display: flex;
+  justify-content: center;
+  padding: 14px 16px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.app-report-footer__button {
+  display: inline-block;
+  text-decoration: none;
+  border: 1px solid #1e293b;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f172a;
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 10px 16px;
+}
+
+.app-report-footer__button:hover {
+  background: #f1f5f9;
+}
+
+.app-report-footer__button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
 .ux-error-boundary {
   min-height: 100vh;
   display: grid;
