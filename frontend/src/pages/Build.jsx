@@ -4,7 +4,6 @@ import "../styles/build.css";
 import { useBuild } from "../context/BuildContext";
 import { getCurrentUser } from "../services/authApi";
 import { createSavedBuild } from "../services/buildApi";
-import { saveBuildForUser } from "../services/savedBuilds";
 import pcImage from "../assets/pc-image.png";
 
 function PartCard({ part }) {
@@ -59,9 +58,8 @@ export default function Build() {
       try {
         await createSavedBuild(buildPayload);
         setSaveMessage("Build saved. You can view it in Saved Builds.");
-      } catch {
-        saveBuildForUser(user, buildPayload);
-        setSaveMessage("Build saved locally. Backend sync is unavailable right now.");
+      } catch (error) {
+        setSaveError(error.message || "Unable to save build right now.");
       }
     } catch (error) {
       setSaveError(error.message || "Unable to save build right now.");
