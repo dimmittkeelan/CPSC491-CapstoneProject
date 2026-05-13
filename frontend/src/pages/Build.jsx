@@ -6,12 +6,26 @@ import { getCurrentUser } from "../services/authApi";
 import { createSavedBuild } from "../services/buildApi";
 import { saveBuildForUser } from "../services/savedBuilds";
 import pcImage from "../assets/pc-image.png";
+import cpuImg from "../assets/cpu.png";
+import gpuImg from "../assets/gpu.png";
+import ramImg from "../assets/ram.png";
+import moboImg from "../assets/motherboard.png";
+import psuImg from "../assets/psu.png";
+import fallbackImg from "../assets/fallback-pc-part.png";
 
-function PartCard({ part }) {
+function PartCard({ part, category, partImages }) {
   return (
     <div className={`partCard partCard--${part.pos}`}>
       <div className="partCard__imgWrap">
-        <img className="partCard__img" src={part.img} alt={part.name} />
+        <img
+          className="partCard__img"
+          src={partImages[category] || fallbackImg}
+          alt={part.name}
+          onError={(e) => {
+            e.target.onerror = null;
+            e.target.src = "/fallback-pc-part.png";
+          }}
+        />
       </div>
       <div className="partCard__text">
         <div className="partCard__titleRow">
@@ -26,7 +40,20 @@ function PartCard({ part }) {
 
 export default function Build() {
   const { selected, totalPrice, budget, issues } = useBuild();
-  const POS = { cpu: "top", gpu: "left", ram: "right", mobo: "bottomLeft", psu: "bottomRight" };
+  const POS = {
+    cpu: "top",
+    gpu: "left",
+    ram: "right",
+    mobo: "bottomLeft",
+    psu: "bottomRight",
+  };
+  const partImages = {
+    cpu: cpuImg,
+    gpu: gpuImg,
+    ram: ramImg,
+    mobo: moboImg,
+    psu: psuImg,
+  };
   const parts = Object.fromEntries(
     Object.entries(POS).map(([cat, pos]) => [cat, selected[cat] ? { ...selected[cat], pos } : null])
   );
@@ -110,11 +137,11 @@ export default function Build() {
           />
         </div>
 
-        {parts.cpu  && <PartCard part={parts.cpu} />}
-        {parts.gpu  && <PartCard part={parts.gpu} />}
-        {parts.ram  && <PartCard part={parts.ram} />}
-        {parts.mobo && <PartCard part={parts.mobo} />}
-        {parts.psu  && <PartCard part={parts.psu} />}
+        {parts.cpu  && <PartCard part={parts.cpu} category="cpu" partImages={partImages} />}
+        {parts.gpu  && <PartCard part={parts.gpu} category="gpu" partImages={partImages} />}
+        {parts.ram  && <PartCard part={parts.ram} category="ram" partImages={partImages} />}
+        {parts.mobo && <PartCard part={parts.mobo} category="mobo" partImages={partImages} />}
+        {parts.psu  && <PartCard part={parts.psu} category="psu" partImages={partImages} />}
       </main>
     </div>
   );
