@@ -4,6 +4,12 @@ import { useBuild } from "../context/BuildContext";
 import { partsData as localPartsData, CATEGORIES, CATEGORY_LABELS } from "../data/partsData";
 import { fetchParts } from "../services/buildApi";
 import "../styles/PartPicker.css";
+import cpuImg from "../assets/cpu.png";
+import gpuImg from "../assets/gpu.png";
+import ramImg from "../assets/ram.png";
+import moboImg from "../assets/motherboard.png";
+import psuImg from "../assets/psu.png";
+import fallbackImg from "../assets/fallback-pc-part.png";
 
 export default function PartPicker() {
   const [activeTab, setActiveTab] = useState("cpu");
@@ -39,6 +45,14 @@ export default function PartPicker() {
       selectPart(activeTab, part);
     }
   }
+
+  const partImages = {
+    cpu: cpuImg,
+    gpu: gpuImg,
+    ram: ramImg,
+    mobo: moboImg,
+    psu: psuImg,
+  };
 
   return (
     <div className="pickerPage">
@@ -85,7 +99,15 @@ export default function PartPicker() {
                 className={`pickerCard ${isSelected ? "pickerCard--selected" : ""}`}
                 onClick={() => handleCardClick(part)}
               >
-                <img className="pickerCard__img" src={part.img} alt={part.name} />
+                <img
+                  className="pickerCard__img"
+                  src={partImages[activeTab] || fallbackImg}
+                  alt={part.name}
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = fallbackImg;
+                  }}
+                />
                 <div className="pickerCard__body">
                   <div className="pickerCard__name">{part.name}</div>
                   <div className="pickerCard__price">${part.price}</div>
