@@ -21,6 +21,7 @@ export default function Navbar() {
     } catch {
       // session already gone is fine
     }
+
     setUser(null);
     navigate("/");
   }
@@ -28,19 +29,58 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       <div className="nav-left">
-        <img src={icon} alt="PC Build Generator Icon" className="nav-icon" />
-        <span className="nav-title">PC Build Generator</span>
+        <img
+          src={icon}
+          alt="PC Build Generator Icon"
+          className="nav-icon"
+        />
+
+        <span className="nav-title">
+          PC Build Generator
+        </span>
       </div>
+
       <div className="nav-links">
-        <Link to="/" className="nav-link">Home</Link>
-        <Link to={user ? "/build" : "/picker"} className="nav-link">{user ? "New Build" : "Get Started"}</Link>
-        <Link to="/saved" className="nav-link">Saved Builds</Link>
-        {user && <Link to="/account" className="nav-link">Account</Link>}
+        <Link to="/" className="nav-link">
+          Home
+        </Link>
+
+        <Link
+          to={user ? "/build" : "/picker"}
+          className="nav-link"
+        >
+          {user ? "New Build" : "Get Started"}
+        </Link>
+
+        <Link to="/guide" className="nav-link">
+          PC Guide
+        </Link>
+
+        <Link to="/saved" className="nav-link">
+          Saved Builds
+        </Link>
+
+        {user && (
+          <Link to="/account" className="nav-link">
+            Account
+          </Link>
+        )}
       </div>
+
       {user ? (
-        <button className="nav-button" onClick={handleLogout}>Logout</button>
+        <button
+          className="nav-button"
+          onClick={handleLogout}
+        >
+          Logout
+        </button>
       ) : (
-        <Link to="/signup" className="nav-button">Sign Up | Login</Link>
+        <Link
+          to="/signup"
+          className="nav-button"
+        >
+          Sign Up | Login
+        </Link>
       )}
     </nav>
   );
