@@ -1,0 +1,119 @@
+.pcguide-page {
+    min-height: 100vh;
+    background:
+      linear-gradient(rgba(5, 5, 15, 0.9),
+      rgba(5, 5, 15, 0.96)),
+      url("../assets/hero-bg.jpg");
+  
+    background-size: cover;
+    background-position: center;
+    color: white;
+    padding: 40px 20px;
+  }
+  
+  .pcguide-container {
+    max-width: 1300px;
+    margin: 0 auto;
+  }
+  
+  .pcguide-hero {
+    text-align: center;
+    margin-bottom: 60px;
+  }
+  
+  .pcguide-badge {
+    display: inline-block;
+    padding: 8px 18px;
+    border-radius: 999px;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: #d8b4fe;
+    font-size: 14px;
+    margin-bottom: 25px;
+  }
+  
+  .pcguide-title {
+    font-size: 64px;
+    font-weight: 900;
+    margin-bottom: 20px;
+    color: white;
+  }
+  
+  .pcguide-description {
+    max-width: 850px;
+    margin: 0 auto;
+    color: #c4b5fd;
+    font-size: 20px;
+    line-height: 1.7;
+  }
+  
+  .pcguide-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 28px;
+  }
+  
+  .pcguide-card {
+    background: rgba(18, 18, 30, 0.82);
+    border: 1px solid rgba(168, 85, 247, 0.15);
+    border-radius: 24px;
+    padding: 30px;
+    backdrop-filter: blur(10px);
+    transition: 0.25s ease;
+  }
+  
+  .pcguide-card:hover {
+    transform: translateY(-5px);
+    border-color: rgba(168, 85, 247, 0.45);
+    box-shadow: 0 0 25px rgba(168, 85, 247, 0.15);
+  }
+  
+  .pcguide-card h2 {
+    font-size: 32px;
+    margin-bottom: 10px;
+  }
+  
+  .pcguide-subtitle {
+    color: #d8b4fe;
+    font-size: 14px;
+    letter-spacing: 1px;
+  }
+  
+  .pcguide-card p {
+    color: #d4d4d8;
+    line-height: 1.7;
+    margin-top: 18px;
+  }
+  
+  .pcguide-points {
+    margin-top: 20px;
+  }
+  
+  .pcguide-point {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+    color: #e4e4e7;
+  }
+  
+  .pcguide-final {
+    margin-top: 70px;
+    background: rgba(18, 18, 30, 0.88);
+    border-radius: 28px;
+    padding: 45px;
+    border: 1px solid rgba(168, 85, 247, 0.15);
+    text-align: center;
+  }
+  
+  .pcguide-final h2 {
+    font-size: 42px;
+    margin-bottom: 25px;
+  }
+  
+  .pcguide-final p {
+    color: #d4d4d8;
+    font-size: 18px;
+    line-height: 1.8;
+    margin-bottom: 16px;
+  }

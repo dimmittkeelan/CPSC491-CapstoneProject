@@ -10,6 +10,7 @@ import PartPicker from "./pages/PartPicker";
 import Navbar from "./components/Navbar";
 import UxErrorBoundary from "./components/UxErrorBoundary";
 import ProtectedRoute from "./components/ProtectedRoute";
+import PCGuide from "./pages/PCGuide";
 import "./App.css";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/picker" element={<PartPicker />} />
+                <Route path="/guide" element={<PCGuide />} />
                 <Route path="/build" element={<Build />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/signup" element={<SignUp />} />
